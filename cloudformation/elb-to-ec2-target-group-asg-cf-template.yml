@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Create an autoscaling group using t2.micro EC2 instances from a launch Template
 Parameters:
-  Environment:
+  ParamEnvironment:
     Type: String
     Default: dev
     Description: Environment to deploy to (dev or prod)
 
-  OperatingSystem:
+  ParamOperatingSystem:
     Type: String
     Default: AmazonLinux
     AllowedValues:
@@ -15,17 +15,17 @@ Parameters:
     Description: Operating System to deploy, AmazonLinux or Ubuntu
     ConstraintDescription: must be either AmazonLinux or Ubuntu.
 
-  AutoscalingDesiredCapacity:
+  ParamAutoscalingDesiredCapacity:
     Type: Number
     Default: 2
     Description: Desired number of EC2 instances for autoscaling group
 
-  AutoscalingMaxSize:
+  ParamAutoscalingMaxSize:
     Type: Number
     Default: 4
     Description: Maximum number of EC2 instances for autoscaling group
 
-  AutoscalingMinSize:
+  ParamAutoscalingMinSize:
     Type: Number
     Default: 1
     Description: Minimum number of EC2 instances for autoscaling group
@@ -68,7 +68,7 @@ Mappings:
         - eu-north-1c
 
 Conditions:
-  isUbuntu: !Equals [!Ref OperatingSystem, Ubuntu]
+  isUbuntu: !Equals [!Ref ParamOperatingSystem, Ubuntu]
 
 Resources:
   # EC2 Security Group Allowing Port 22 and 80 from anywhere
@@ -104,7 +104,7 @@ Resources:
   EC2LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub "${Environment}-EC2LaunchTemplate"
+      LaunchTemplateName: !Sub "${ParamEnvironment}-EC2LaunchTemplate"
       LaunchTemplateData:
         ImageId:
           !FindInMap [RegionMap, !Ref "AWS::Region", !Ref OperatingSystem]
@@ -116,7 +116,7 @@ Resources:
           - ResourceType: instance
             Tags:
               - Key: Name
-                Value: !Sub "${Environment}-EC2Instance"
+                Value: !Sub "${ParamEnvironment}-EC2Instance"
         UserData:
           !If
             - isUbuntu
@@ -126,14 +126,14 @@ Resources:
                 apt install -y nginx
                 systemctl start nginx.service
                 systemctl enable nginx.service
-                echo "<h1>${Environment} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
+                echo "<h1>${ParamEnvironment} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
             - Fn::Base64: !Sub |
                 #!/bin/bash
                 yum update -y
                 yum install -y nginx
                 systemctl start nginx.service
                 systemctl enable nginx.service
-                echo "<h1>${Environment} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
+                echo "<h1>${ParamEnvironment} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
 
   # Creating a Target Group
   EC2TargetGroup:
@@ -146,7 +146,7 @@ Resources:
       HealthyThresholdCount: 2
       Matcher:
         HttpCode: 200
-      Name: !Sub "${Environment}-EC2TargetGroup"
+      Name: !Sub "${ParamEnvironment}-EC2TargetGroup"
       Port: 80
       Protocol: HTTP
       ProtocolVersion: HTTP1
@@ -157,7 +157,7 @@ Resources:
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub "${Environment}-ApplicationLoadBalancer"
+      Name: !Sub "${ParamEnvironment}-ApplicationLoadBalancer"
       Scheme: internet-facing
       Subnets: !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]
       SecurityGroups:
@@ -166,7 +166,7 @@ Resources:
       IpAddressType: ipv4
       Tags:
         - Key: Name
-          Value: !Sub "${Environment}-ApplicationLoadBalancer"
+          Value: !Sub "${ParamEnvironment}-ApplicationLoadBalancer"
 
   HTTPlistener:
     Type: "AWS::ElasticLoadBalancingV2::Listener"
@@ -185,13 +185,13 @@ Resources:
   EC2AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: !Sub "${Environment}-EC2AutoScalingGroup"
+      AutoScalingGroupName: !Sub "${ParamEnvironment}-EC2AutoScalingGroup"
       LaunchTemplate:
         LaunchTemplateId: !Ref EC2LaunchTemplate
         Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
-      MinSize: !Ref AutoscalingMinSize
-      MaxSize: !Ref AutoscalingMaxSize
-      DesiredCapacity: !Ref AutoscalingDesiredCapacity
+      MinSize: !Ref ParamAutoscalingMinSize
+      MaxSize: !Ref ParamAutoscalingMaxSize
+      DesiredCapacity: !Ref ParamAutoscalingDesiredCapacity
       AvailabilityZones:
         !FindInMap [RegionMap, !Ref "AWS::Region", AvailabilityZones]
       MetricsCollection:
