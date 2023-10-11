@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create an autoscaling group using t2.micro EC2 instances from a launch Template
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment to deploy to (dev or prod)
+
+  OperatingSystem:
+    Type: String
+    Default: AmazonLinux
+    AllowedValues:
+      - AmazonLinux
+      - Ubuntu
+    Description: Operating System to deploy, AmazonLinux or Ubuntu
+    ConstraintDescription: must be either AmazonLinux or Ubuntu.
+
+  AutoscalingDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of EC2 instances
+
+  AutoscalingMaxSize:
+    Type: Number
+    Default: 4
+    Description: Maximum number of EC2 instances
+
+  AutoscalingMinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum number of EC2 instances
+
+Mappings:
+  RegionMap:
+    # Details for eu-west-1
+    eu-west-1:
+      InstanceType: t2.micro
+      AmazonLinux: ami-0f3164307ee5d695a
+      Ubuntu: ami-0989fb15ce71ba39e
+      SSHKeyName: aws_rsa.pub
+      VPCId: vpc-0cde3e30cfa57f374
+      ApplicationLoadBalancerSecurityGroups:
+        - sg-0fb373ffdc5f4db52
+      Subnets:
+        - subnet-0d5f2db8512c53f0d
+        - subnet-00d40d893f48f87dd
+        - subnet-09bfa8c5214585460
+      AvailabilityZones:
+        - eu-west-1a
+        - eu-west-1b
+        - eu-west-1c
+    # Details for eu-north-1
+    eu-north-1:
+      InstanceType: t3.micro
+      AmazonLinux: ami-071df4a41c6f9ee2e
+      Ubuntu: ami-0989fb15ce71ba39e
+      SSHKeyName: aws_rsa.pub
+      VPCId: vpc-075ae52179ed00123
+      ApplicationLoadBalancerSecurityGroups:
+        - sg-0fb373ffdc5f4db52
+      Subnets:
+        - subnet-01a8f3c048b19c92b
+        - subnet-0a8018ad24ba7e2ea
+        - subnet-06a3a6853b1ce775d
+      AvailabilityZones:
+        - eu-north-1a
+        - eu-north-1b
+        - eu-north-1c
+
+Resources:
+  # EC2 Security Group Allowing Port 22 and 80 from anywhere
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH and HTTP access to ec2 instances"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId:
+            Ref: ELBSecurityGroup
+
+  # ELB Security Group allowing Port 80 from anywhere
+  ELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "ELB Security Group"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Creating a Launch Template
+  EC2LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${Environment}-EC2LaunchTemplate"
+      LaunchTemplateData:
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", !Ref OperatingSystem]
+        InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+        KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${Environment}-EC2Instance"
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y nginx
+            systemctl start nginx.service
+            systemctl enable nginx.service
+            echo "<html><body><h1>${Environment} $(hostname -f)</h1></body></html>" > /usr/share/nginx/html/index.html
+
+  # Creating a Target Group
+  EC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /index.html
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200
+      Name: !Sub "${Environment}-EC2TargetGroup"
+      Port: 80
+      Protocol: HTTP
+      ProtocolVersion: HTTP1
+      UnhealthyThresholdCount: 2
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+
+  # Creating an Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${Environment}-ApplicationLoadBalancer"
+      Scheme: internet-facing
+      Subnets: !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]
+      SecurityGroups:
+        - !Ref ELBSecurityGroup
+      Type: application
+      IpAddressType: ipv4
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-ApplicationLoadBalancer"
+
+  HTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - Type: "forward"
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref EC2TargetGroup
+                Weight: 1
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: "HTTP"
+
+  #Creating autoscaling group with desired minimum and maximum size
+  EC2AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${Environment}-EC2AutoScalingGroup"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EC2LaunchTemplate
+        Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref AutoscalingMinSize
+      MaxSize: !Ref AutoscalingMaxSize
+      DesiredCapacity: !Ref AutoscalingDesiredCapacity
+      AvailabilityZones: !FindInMap [RegionMap, !Ref "AWS::Region", AvailabilityZones]
+      MetricsCollection:
+        - Granularity: 1Minute
+      TargetGroupARNs:
+        - !Ref EC2TargetGroup
