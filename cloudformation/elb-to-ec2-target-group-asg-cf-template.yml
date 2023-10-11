@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Create an autoscaling group using t2.micro EC2 instances from a launch Template
 Parameters:
-
   Environment:
     Type: String
     Default: dev
@@ -19,17 +18,17 @@ Parameters:
   AutoscalingDesiredCapacity:
     Type: Number
     Default: 2
-    Description: Desired number of EC2 instances
+    Description: Desired number of EC2 instances for autoscaling group
 
   AutoscalingMaxSize:
     Type: Number
     Default: 4
-    Description: Maximum number of EC2 instances
+    Description: Maximum number of EC2 instances for autoscaling group
 
   AutoscalingMinSize:
     Type: Number
     Default: 1
-    Description: Minimum number of EC2 instances
+    Description: Minimum number of EC2 instances for autoscaling group
 
 Mappings:
   RegionMap:
@@ -37,7 +36,7 @@ Mappings:
     eu-west-1:
       InstanceType: t2.micro
       AmazonLinux: ami-0f3164307ee5d695a
-      Ubuntu: ami-0989fb15ce71ba39e
+      Ubuntu: ami-01dd271720c1ba44f
       SSHKeyName: aws_rsa.pub
       VPCId: vpc-0cde3e30cfa57f374
       ApplicationLoadBalancerSecurityGroups:
@@ -67,6 +66,9 @@ Mappings:
         - eu-north-1a
         - eu-north-1b
         - eu-north-1c
+
+Conditions:
+  isUbuntu: !Equals [!Ref OperatingSystem, Ubuntu]
 
 Resources:
   # EC2 Security Group Allowing Port 22 and 80 from anywhere
@@ -104,7 +106,8 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub "${Environment}-EC2LaunchTemplate"
       LaunchTemplateData:
-        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", !Ref OperatingSystem]
+        ImageId:
+          !FindInMap [RegionMap, !Ref "AWS::Region", !Ref OperatingSystem]
         InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
         KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
         SecurityGroupIds:
@@ -115,13 +118,22 @@ Resources:
               - Key: Name
                 Value: !Sub "${Environment}-EC2Instance"
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            yum update -y
-            yum install -y nginx
-            systemctl start nginx.service
-            systemctl enable nginx.service
-            echo "<html><body><h1>${Environment} $(hostname -f)</h1></body></html>" > /usr/share/nginx/html/index.html
+          !If
+            - isUbuntu
+            - Fn::Base64: !Sub |
+                #!/bin/bash
+                apt update -y
+                apt install -y nginx
+                systemctl start nginx.service
+                systemctl enable nginx.service
+                echo "<h1>${Environment} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
+            - Fn::Base64: !Sub |
+                #!/bin/bash
+                yum update -y
+                yum install -y nginx
+                systemctl start nginx.service
+                systemctl enable nginx.service
+                echo "<h1>${Environment} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
 
   # Creating a Target Group
   EC2TargetGroup:
@@ -180,7 +192,8 @@ Resources:
       MinSize: !Ref AutoscalingMinSize
       MaxSize: !Ref AutoscalingMaxSize
       DesiredCapacity: !Ref AutoscalingDesiredCapacity
-      AvailabilityZones: !FindInMap [RegionMap, !Ref "AWS::Region", AvailabilityZones]
+      AvailabilityZones:
+        !FindInMap [RegionMap, !Ref "AWS::Region", AvailabilityZones]
       MetricsCollection:
         - Granularity: 1Minute
       TargetGroupARNs:
