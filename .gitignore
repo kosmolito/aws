@@ -1,1 +1,14 @@
 *test*
+
+# Terraform related files and directories
+# Local .terraform directories
+**/.terraform/*
+*.terraform*
+*.tfstate*
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.tfout
+*.lock.hcl
+*.lock.json
