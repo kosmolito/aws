@@ -1,0 +1,27 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+# Transform section is needed for Fn::ForEach
+Transform: AWS::LanguageExtensions
+Description: >
+  This template creates multiple EC2 instances using a for-each loop
+
+Mappings:
+  Instances:
+    ImageID:
+      A: ami-0f3164307ee5d695a
+      B: ami-01dd271720c1ba44f
+
+Resources:
+  # Create EC2 instances using Fn::ForEach, in this case 2 instances will be created, A and B
+  Fn::ForEach::Instances:
+    - Identifier
+    - [A, B]
+    - Instance${Identifier}: 
+        Type: AWS::EC2::Instance
+        Properties:
+          ImageId: !FindInMap [Instances, ImageID, !Ref Identifier]
+          InstanceType: t2.micro
+          KeyName: aws_rsa.pub
+          Tags:
+            - Key: Name
+              Value: !Sub "${AWS::StackName}-Instance-${Identifier}"
