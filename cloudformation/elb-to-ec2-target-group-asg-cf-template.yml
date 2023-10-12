@@ -4,7 +4,11 @@ Parameters:
   ParamEnvironment:
     Type: String
     Default: dev
+    AllowedValues:
+      - dev
+      - prod
     Description: Environment to deploy to (dev or prod)
+    ConstraintDescription: must be either dev or prod.
 
   ParamOperatingSystem:
     Type: String
@@ -104,34 +108,43 @@ Resources:
           ToPort: 80
           SourceSecurityGroupId:
             Ref: ELBSecurityGroup
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
   # ELB Security Group allowing Port 80 from anywhere
   ELBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: "ELB Security Group"
+      GroupDescription: "ELB Security Group for Application Load Balancer"
       VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
   # ELB Security Group allowing Port 80 from anywhere
   BastionHostSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Condition: createBastionHost
     Properties:
-      GroupDescription: "Bastion Host Security Group"
+      GroupDescription: "Bastion Host Security Group for SSH access"
       VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
   # Creating a Bastion Host EC2 Instance for SSH access
-  BastionHostEc2Instance:
+  BastionHost:
     Type: "AWS::EC2::Instance"
     Condition: createBastionHost
     Properties:
@@ -142,13 +155,15 @@ Resources:
       InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
       Tags:
         - Key: Name
-          Value: !Sub "${ParamEnvironment}-BastionHostEc2Instance"
+          Value: !Sub "${AWS::StackName}-BastionHost"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
   # Creating a Launch Template
   EC2LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub "${ParamEnvironment}-EC2LaunchTemplate"
+      LaunchTemplateName: !Sub "${AWS::StackName}-EC2LaunchTemplate"
       LaunchTemplateData:
         ImageId:
           !FindInMap [RegionMap, !Ref "AWS::Region", !Ref ParamOperatingSystem]
@@ -160,7 +175,9 @@ Resources:
           - ResourceType: instance
             Tags:
               - Key: Name
-                Value: !Sub "${ParamEnvironment}-EC2Instance"
+                Value: !Sub "${AWS::StackName}-EC2Instance"
+              - Key: Environment
+                Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
         UserData:
           !If
             - isUbuntu
@@ -170,14 +187,14 @@ Resources:
                 apt install -y nginx
                 systemctl start nginx.service
                 systemctl enable nginx.service
-                echo "<h1>${ParamEnvironment} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
+                echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
             - Fn::Base64: !Sub |
                 #!/bin/bash
                 yum update -y
                 yum install -y nginx
                 systemctl start nginx.service
                 systemctl enable nginx.service
-                echo "<h1>${ParamEnvironment} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
+                echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
 
   # Creating a Target Group
   EC2TargetGroup:
@@ -190,18 +207,21 @@ Resources:
       HealthyThresholdCount: 2
       Matcher:
         HttpCode: 200
-      Name: !Sub "${ParamEnvironment}-EC2TargetGroup"
+      Name: !Sub "${AWS::StackName}-EC2TargetGroup"
       Port: 80
       Protocol: HTTP
       ProtocolVersion: HTTP1
       UnhealthyThresholdCount: 2
       VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
   # Creating an Application Load Balancer
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub "${ParamEnvironment}-ApplicationLoadBalancer"
+      Name: !Sub "${AWS::StackName}-ApplicationLoadBalancer"
       Scheme: internet-facing
       Subnets: !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]
       SecurityGroups:
@@ -210,7 +230,9 @@ Resources:
       IpAddressType: ipv4
       Tags:
         - Key: Name
-          Value: !Sub "${ParamEnvironment}-ApplicationLoadBalancer"
+          Value: !Sub "${AWS::StackName}-ApplicationLoadBalancer"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
   HTTPlistener:
     Type: "AWS::ElasticLoadBalancingV2::Listener"
@@ -229,7 +251,7 @@ Resources:
   EC2AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: !Sub "${ParamEnvironment}-EC2AutoScalingGroup"
+      AutoScalingGroupName: !Sub "${AWS::StackName}-EC2AutoScalingGroup"
       LaunchTemplate:
         LaunchTemplateId: !Ref EC2LaunchTemplate
         Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
@@ -242,3 +264,7 @@ Resources:
         - Granularity: 1Minute
       TargetGroupARNs:
         - !Ref EC2TargetGroup
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+          PropagateAtLaunch: true
