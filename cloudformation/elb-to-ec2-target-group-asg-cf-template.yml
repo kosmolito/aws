@@ -107,7 +107,7 @@ Resources:
       LaunchTemplateName: !Sub "${ParamEnvironment}-EC2LaunchTemplate"
       LaunchTemplateData:
         ImageId:
-          !FindInMap [RegionMap, !Ref "AWS::Region", !Ref OperatingSystem]
+          !FindInMap [RegionMap, !Ref "AWS::Region", !Ref ParamOperatingSystem]
         InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
         KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
         SecurityGroupIds:
