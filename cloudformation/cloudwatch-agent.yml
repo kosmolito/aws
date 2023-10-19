@@ -8,7 +8,7 @@ Resources:
     Properties:
       DataType: text
       Description: WebServers CloudWatch Agent Configuration
-      Name: !Sub "${AWS::StackName}-WebServersSSM"
+      Name: !Sub "AmazonCloudWatch-${AWS::StackName}-WebServersSSM"
       Type: String
       Tier: Standard
       Value: |
@@ -128,12 +128,9 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           yum update -y
-          yum install -y nginx
-          systemctl start nginx
-          systemctl enable nginx
-          yum install -y amazon-cloudwatch-agent
-          yum install -y amazon-cloudwatch-agent-config-wizard
+          yum install -y nginx collectd amazon-cloudwatch-agent
+          systemctl start nginx.service collectd.service
+          systemctl enable nginx.service collectd.service
           /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c ssm:${WebServersSSM}
           systemctl restart amazon-cloudwatch-agent.service
           systemctl enable amazon-cloudwatch-agent.service
-
