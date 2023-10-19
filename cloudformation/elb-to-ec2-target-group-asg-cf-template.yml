@@ -53,8 +53,6 @@ Mappings:
       Ubuntu: ami-01dd271720c1ba44f
       SSHKeyName: aws_rsa.pub
       VPCId: vpc-0cde3e30cfa57f374
-      ApplicationLoadBalancerSecurityGroups:
-        - sg-0fb373ffdc5f4db52
       Subnets:
         - subnet-0d5f2db8512c53f0d
         - subnet-00d40d893f48f87dd
@@ -70,8 +68,6 @@ Mappings:
       Ubuntu: ami-0989fb15ce71ba39e
       SSHKeyName: aws_rsa.pub
       VPCId: vpc-075ae52179ed00123
-      ApplicationLoadBalancerSecurityGroups:
-        - sg-0fb373ffdc5f4db52
       Subnets:
         - subnet-01a8f3c048b19c92b
         - subnet-0a8018ad24ba7e2ea
