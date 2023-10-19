@@ -1,0 +1,139 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  # Create a SSM Parameter for a Webserver
+  WebServersSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      DataType: text
+      Description: WebServers CloudWatch Agent Configuration
+      Name: !Sub "${AWS::StackName}-WebServersSSM"
+      Type: String
+      Tier: Standard
+      Value: |
+        {
+          "agent": {
+            "metrics_collection_interval": 60,
+            "run_as_user": "root"
+          },
+          "logs": {
+            "logs_collected": {
+              "files": {
+                "collect_list": [
+                  {
+                    "file_path": "/var/log/nginx/access.log",
+                    "log_group_name": "access.log",
+                    "log_stream_name": "{instance_id}",
+                    "retention_in_days": 30
+                  },
+                  {
+                    "file_path": "/var/log/nginx/error.log",
+                    "log_group_name": "error.log",
+                    "log_stream_name": "{instance_id}",
+                    "retention_in_days": 30
+                  }
+                ]
+              }
+            }
+          },
+          "metrics": {
+            "aggregation_dimensions": [
+              [
+                "InstanceId"
+              ]
+            ],
+            "append_dimensions": {
+              "AutoScalingGroupName": "${aws:AutoScalingGroupName}",
+              "ImageId": "${aws:ImageId}",
+              "InstanceId": "${aws:InstanceId}",
+              "InstanceType": "${aws:InstanceType}"
+            },
+            "metrics_collected": {
+              "collectd": {
+                "metrics_aggregation_interval": 60
+              },
+              "disk": {
+                "measurement": [
+                  "used_percent"
+                ],
+                "metrics_collection_interval": 60,
+                "resources": [
+                  "*"
+                ]
+              },
+              "mem": {
+                "measurement": [
+                  "mem_used_percent"
+                ],
+                "metrics_collection_interval": 60
+              }
+            }
+          }
+        }
+
+  # Create an IAM Role for CloudWatch Server access
+  IAMCloudWatchAgentServerRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-IAMCloudWatchAgentServerRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+
+  # Create an IAM Instance Profile for CloudWatch Server access
+  IAMCloudWatchAgentServerInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-IAMCloudWatchAgentServerInstanceProfile"
+      Path: /
+      Roles:
+        - !Ref IAMCloudWatchAgentServerRole
+
+  # Create a EC2 Security Group
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH access to ec2 instances"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+
+  # Create an EC2 instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref IAMCloudWatchAgentServerInstanceProfile
+      ImageId: ami-0f3164307ee5d695a
+      InstanceType: t2.micro
+      KeyName: aws_rsa.pub
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      # SubnetId: !Ref ParamSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-EC2Instance"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y nginx
+          systemctl start nginx
+          systemctl enable nginx
+          yum install -y amazon-cloudwatch-agent
+          yum install -y amazon-cloudwatch-agent-config-wizard
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c ssm:${WebServersSSM}
+          systemctl restart amazon-cloudwatch-agent.service
+          systemctl enable amazon-cloudwatch-agent.service
+
