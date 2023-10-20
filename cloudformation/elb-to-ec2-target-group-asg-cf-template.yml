@@ -298,3 +298,8 @@ Outputs:
   ApplicationLoadBalancerDNSName:
     Description: Application Load Balancer DNS Name
     Value: !GetAtt ApplicationLoadBalancer.DNSName
+  # Outputs for the Bastion Host Public DNS Name ONLY if Bastion Host is created
+  BastionHostPublicDNSName:
+    Condition: createBastionHost
+    Description: Bastion Host Public DNS Name
+    Value: !GetAtt BastionHost.PublicDnsName
