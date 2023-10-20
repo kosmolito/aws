@@ -293,3 +293,8 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: !Ref ParamAutoscalingScaleUpThreshold
 
+Outputs:
+  # Outputs for the Application Load Balancer DNS Name
+  ApplicationLoadBalancerDNSName:
+    Description: Application Load Balancer DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
