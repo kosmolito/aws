@@ -50,9 +50,14 @@ Här nedan kan man se hela CloudFormation template. Det är en relativ stor temp
 
 ```yaml
 ---
-AWSTemplateFormatVersion: 2010-09-09
-Description: Create an autoscaling group using t2.micro EC2 instances from a launch Template
-# Here we define the parameters that can be passed to the template
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  - Create an autoscaling group using EC2 instances from a launch Template
+    behind an Application Load Balancer (ALB) and a Target Group.
+  - Autoscaling group will scale depending on CPU utilization. Default is 80%.
+  - The EC2 instances will be deployed in a VPC with 3 subnets in 3 different Availability Zones.
+  - The EC2 instances will be deployed with NginX and a simple HTML page.
+  - Optionally create a Bastion Host for SSH access to EC2 instances.
 Parameters:
   ParamEnvironment:
     Type: String
@@ -87,8 +92,23 @@ Parameters:
     Default: 1
     Description: Minimum number of EC2 instances for autoscaling group
 
-# Here we define the mappings that can be used in the template,
-# Mainly used to define resources that are region specific.
+  ParamAutoscalingScaleUpThreshold:
+    Type: Number
+    Default: 80
+    MinValue: 50
+    MaxValue: 100
+    Description: CPU utilization threshold for scaling up
+    ConstraintDescription: must be a number between 50 and 100.
+
+  ParamCreateBastionHost:
+    Type: String
+    Default: No
+    AllowedValues:
+      - Yes
+      - No
+    Description: Create a Bastion Host for SSH access to EC2 instances
+    ConstraintDescription: must be either Yes or No.
+
 Mappings:
   RegionMap:
     # Details for eu-west-1
@@ -98,8 +118,6 @@ Mappings:
       Ubuntu: ami-01dd271720c1ba44f
       SSHKeyName: aws_rsa.pub
       VPCId: vpc-0cde3e30cfa57f374
-      ApplicationLoadBalancerSecurityGroups:
-        - sg-0fb373ffdc5f4db52
       Subnets:
         - subnet-0d5f2db8512c53f0d
         - subnet-00d40d893f48f87dd
@@ -115,8 +133,6 @@ Mappings:
       Ubuntu: ami-0989fb15ce71ba39e
       SSHKeyName: aws_rsa.pub
       VPCId: vpc-075ae52179ed00123
-      ApplicationLoadBalancerSecurityGroups:
-        - sg-0fb373ffdc5f4db52
       Subnets:
         - subnet-01a8f3c048b19c92b
         - subnet-0a8018ad24ba7e2ea
@@ -126,10 +142,9 @@ Mappings:
         - eu-north-1b
         - eu-north-1c
 
-# Here we define the conditions that can be used in the template
-# Run different commands depending on the Linux distribution, default is AmazonLinux
 Conditions:
   isUbuntu: !Equals [!Ref ParamOperatingSystem, Ubuntu]
+  createBastionHost: !Equals [!Ref ParamCreateBastionHost, Yes]
 
 Resources:
   # EC2 Security Group Allowing Port 22 and 80 from anywhere
@@ -138,7 +153,17 @@ Resources:
     Properties:
       GroupDescription: "Allow SSH and HTTP access to ec2 instances"
       VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      # Security Group Ingress for SSH and HTTP
       SecurityGroupIngress:
+        # SSH access from Bastion Host Security Group only if Bastion Host is created
+        - !If
+          - createBastionHost
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            SourceSecurityGroupId:
+              Ref: BastionHostSecurityGroup
+          - !Ref "AWS::NoValue"
         # HTTP access from ELB Security Group only
         - IpProtocol: tcp
           FromPort: 80
@@ -161,6 +186,38 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
       Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # ELB Security Group allowing Port 80 from anywhere
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: createBastionHost
+    Properties:
+      GroupDescription: "Bastion Host Security Group for SSH access"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # Creating a Bastion Host EC2 Instance for SSH access
+  BastionHost:
+    Type: "AWS::EC2::Instance"
+    Condition: createBastionHost
+    Properties:
+      SecurityGroupIds:
+        - !Ref BastionHostSecurityGroup
+      KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AmazonLinux]
+      InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-BastionHost"
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
@@ -189,14 +246,14 @@ Resources:
             - Fn::Base64: !Sub |
                 #!/bin/bash
                 apt update -y
-                apt install -y nginx
+                apt install -y nginx stress
                 systemctl start nginx.service
                 systemctl enable nginx.service
                 echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
             - Fn::Base64: !Sub |
                 #!/bin/bash
                 yum update -y
-                yum install -y nginx
+                yum install -y nginx stress
                 systemctl start nginx.service
                 systemctl enable nginx.service
                 echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
@@ -239,6 +296,8 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
+  # Creating an Application Load Balancer Listener, forwarding traffic to the target group
+  # and specifying the load balancer port and protocol 
   HTTPlistener:
     Type: "AWS::ElasticLoadBalancingV2::Listener"
     Properties:
@@ -273,6 +332,28 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
           PropagateAtLaunch: true
+
+  # Autoscaling Policy, scaling up when CPU utilization is above 80%
+  AutoScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref EC2AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref ParamAutoscalingScaleUpThreshold
+
+Outputs:
+  # Outputs for the Application Load Balancer DNS Name
+  ApplicationLoadBalancerDNSName:
+    Description: Application Load Balancer DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  # Outputs for the Bastion Host Public DNS Name ONLY if Bastion Host is created
+  BastionHostPublicDNSName:
+    Condition: createBastionHost
+    Description: Bastion Host Public DNS Name
+    Value: !GetAtt BastionHost.PublicDnsName
 ```
 
 ## Förutsättningar
