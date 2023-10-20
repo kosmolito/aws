@@ -41,6 +41,14 @@ Parameters:
     Default: 1
     Description: Minimum number of EC2 instances for autoscaling group
 
+  ParamAutoscalingScaleUpThreshold:
+    Type: Number
+    Default: 80
+    MinValue: 50
+    MaxValue: 100
+    Description: CPU utilization threshold for scaling up
+    ConstraintDescription: must be a number between 50 and 100.
+
   ParamCreateBastionHost:
     Type: String
     Default: No
@@ -273,3 +281,15 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
           PropagateAtLaunch: true
+
+  # Autoscaling Policy, scaling up when CPU utilization is above 80%
+  AutoScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref EC2AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref ParamAutoscalingScaleUpThreshold
+
