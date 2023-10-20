@@ -181,14 +181,14 @@ Resources:
             - Fn::Base64: !Sub |
                 #!/bin/bash
                 apt update -y
-                apt install -y nginx
+                apt install -y nginx stress
                 systemctl start nginx.service
                 systemctl enable nginx.service
                 echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
             - Fn::Base64: !Sub |
                 #!/bin/bash
                 yum update -y
-                yum install -y nginx
+                yum install -y nginx stress
                 systemctl start nginx.service
                 systemctl enable nginx.service
                 echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
