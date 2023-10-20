@@ -12,3 +12,4 @@
 *.tfout
 *.lock.hcl
 *.lock.json
+*.pdf
