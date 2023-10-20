@@ -1,6 +1,12 @@
 ---
-AWSTemplateFormatVersion: 2010-09-09
-Description: Create an autoscaling group using t2.micro EC2 instances from a launch Template
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  - Create an autoscaling group using EC2 instances from a launch Template
+    behind an Application Load Balancer (ALB) and a Target Group.
+  - Autoscaling group will scale depending on CPU utilization. Default is 80%.
+  - The EC2 instances will be deployed in a VPC with 3 subnets in 3 different Availability Zones.
+  - The EC2 instances will be deployed with NginX and a simple HTML page.
+  - Optionally create a Bastion Host for SSH access to EC2 instances.
 Parameters:
   ParamEnvironment:
     Type: String
@@ -231,6 +237,8 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
+  # Creating an Application Load Balancer Listener, forwarding traffic to the target group
+  # and specifying the load balancer port and protocol 
   HTTPlistener:
     Type: "AWS::ElasticLoadBalancingV2::Listener"
     Properties:
