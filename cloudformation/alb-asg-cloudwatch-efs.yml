@@ -1,0 +1,600 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create an autoscaling group using t2.micro EC2 instances from a launch Template
+Parameters:
+  ParamEnvironment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment to deploy to (dev or prod)
+    ConstraintDescription: must be either dev or prod.
+
+  ParamOperatingSystem:
+    Type: String
+    Default: AmazonLinux
+    AllowedValues:
+      - AmazonLinux
+      - Ubuntu
+    Description: Operating System to deploy, AmazonLinux or Ubuntu
+    ConstraintDescription: must be either AmazonLinux or Ubuntu.
+
+  ParamAutoscalingDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of EC2 instances for autoscaling group
+
+  ParamAutoscalingMaxSize:
+    Type: Number
+    Default: 4
+    Description: Maximum number of EC2 instances for autoscaling group
+
+  ParamAutoscalingMinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum number of EC2 instances for autoscaling group
+
+  ParamAutoscalingScaleUpThreshold:
+    Type: Number
+    Default: 80
+    MinValue: 50
+    MaxValue: 100
+    Description: CPU utilization threshold for scaling up
+    ConstraintDescription: must be a number between 50 and 100.
+
+  ParamCreateBastionHost:
+    Type: String
+    Default: No
+    AllowedValues:
+      - Yes
+      - No
+    Description: Create a Bastion Host for SSH access to EC2 instances
+    ConstraintDescription: must be either Yes or No.
+
+Mappings:
+  RegionMap:
+    # Details for eu-west-1
+    eu-west-1:
+      InstanceType: t2.micro
+      AmazonLinux: ami-0f3164307ee5d695a
+      Ubuntu: ami-01dd271720c1ba44f
+      SSHKeyName: aws_rsa.pub
+      VPCId: vpc-0cde3e30cfa57f374
+      Subnets:
+        - subnet-0d5f2db8512c53f0d
+        - subnet-00d40d893f48f87dd
+        - subnet-09bfa8c5214585460
+      AvailabilityZones:
+        - eu-west-1a
+        - eu-west-1b
+        - eu-west-1c
+    # Details for eu-north-1
+    eu-north-1:
+      InstanceType: t3.micro
+      AmazonLinux: ami-071df4a41c6f9ee2e
+      Ubuntu: ami-0989fb15ce71ba39e
+      SSHKeyName: aws_rsa.pub
+      VPCId: vpc-075ae52179ed00123
+      Subnets:
+        - subnet-01a8f3c048b19c92b
+        - subnet-0a8018ad24ba7e2ea
+        - subnet-06a3a6853b1ce775d
+      AvailabilityZones:
+        - eu-north-1a
+        - eu-north-1b
+        - eu-north-1c
+
+Conditions:
+  isUbuntu: !Equals [!Ref ParamOperatingSystem, Ubuntu]
+  createBastionHost: !Equals [!Ref ParamCreateBastionHost, Yes]
+
+Resources:
+
+  # EC2 Security Group Allowing Port 22 and 80 from anywhere
+  EC2LaunchTemplateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH and HTTP access to ec2 instances"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      # Security Group Ingress for SSH and HTTP
+      SecurityGroupIngress:
+        # SSH access from Bastion Host Security Group only if Bastion Host is created
+        - !If
+          - createBastionHost
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            SourceSecurityGroupId:
+              Ref: BastionHostSecurityGroup
+          - !Ref "AWS::NoValue"
+        # HTTP access from ELB Security Group only
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId:
+            Ref: ELBSecurityGroup
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # ELB Security Group allowing Port 80 from anywhere
+  ELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "ELB Security Group for Application Load Balancer"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # ELB Security Group allowing Port 80 from anywhere
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: createBastionHost
+    Properties:
+      GroupDescription: "Bastion Host Security Group for SSH access"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+
+  ############### EFS #####################
+  # Create an EFS File System Security Group allowing NFS traffic
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "allow-efs-traffic"
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+
+  EFSIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref EFSSecurityGroup
+
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      FileSystemTags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+
+
+  MountTargetResource1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Select [0, !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]]
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Select [1, !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]]
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Select [2, !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]]
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  ########################## END EFS #############################
+
+  ########################## CLOUDWATCH #############################
+
+  # Create an IAM Role for CloudWatch Server access
+  IAMCloudWatchAgentServerRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-IAMCloudWatchAgentServerRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+
+  # Create an IAM Instance Profile for CloudWatch Server access
+  IAMCloudWatchAgentServerInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-IAMCloudWatchAgentServerInstanceProfile"
+      Path: /
+      Roles:
+        - !Ref IAMCloudWatchAgentServerRole
+
+  # Create a SSM Parameter for a Webserver
+  WebServersSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      DataType: text
+      Description: WebServers CloudWatch Agent Configuration
+      # The name MUST start with "AmazonCloudWatch-" due to the managed policy (IAMCloudWatchAgentServerRole)
+      # Its configured to allow access to SSM Parameters starting with "AmazonCloudWatch-"
+      Name: !Sub "AmazonCloudWatch-${AWS::StackName}-WebServersSSM"
+      Type: String
+      Tier: Standard
+      Value: |
+        {
+          "agent": {
+            "metrics_collection_interval": 60,
+            "run_as_user": "root"
+          },
+          "logs": {
+            "logs_collected": {
+              "files": {
+                "collect_list": [
+                  {
+                    "file_path": "/var/log/nginx/access.log",
+                    "log_group_name": "access.log",
+                    "log_stream_name": "{instance_id}",
+                    "retention_in_days": 30
+                  },
+                  {
+                    "file_path": "/var/log/nginx/error.log",
+                    "log_group_name": "error.log",
+                    "log_stream_name": "{instance_id}",
+                    "retention_in_days": 30
+                  }
+                ]
+              }
+            }
+          },
+          "metrics": {
+            "aggregation_dimensions": [
+              [
+                "InstanceId"
+              ]
+            ],
+            "append_dimensions": {
+              "AutoScalingGroupName": "${aws:AutoScalingGroupName}",
+              "ImageId": "${aws:ImageId}",
+              "InstanceId": "${aws:InstanceId}",
+              "InstanceType": "${aws:InstanceType}"
+            },
+            "metrics_collected": {
+              "collectd": {
+                "metrics_aggregation_interval": 60
+              },
+              "disk": {
+                "measurement": [
+                  "used_percent"
+                ],
+                "metrics_collection_interval": 60,
+                "resources": [
+                  "*"
+                ]
+              },
+              "mem": {
+                "measurement": [
+                  "mem_used_percent"
+                ],
+                "metrics_collection_interval": 60
+              }
+            }
+          }
+        }
+
+  ########################## END CLOUDWATCH #############################
+
+  # Creating a Bastion Host EC2 Instance for SSH access
+  BastionHost:
+    Type: "AWS::EC2::Instance"
+    Condition: createBastionHost
+    Properties:
+      SecurityGroupIds:
+        - !Ref BastionHostSecurityGroup
+      KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AmazonLinux]
+      InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-BastionHost"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # Creating a Launch Template
+  EC2LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-EC2LaunchTemplate"
+      LaunchTemplateData:
+        ImageId:
+          !FindInMap [RegionMap, !Ref "AWS::Region", !Ref ParamOperatingSystem]
+        InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+        KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+        IamInstanceProfile: 
+          Arn: !GetAtt IAMCloudWatchAgentServerInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref EC2LaunchTemplateSecurityGroup
+          - !Ref EFSSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-EC2Instance"
+              - Key: Environment
+                Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+        UserData:
+          !If
+            - isUbuntu
+            - Fn::Base64: !Sub |
+                #!/bin/bash -xe
+                apt update -y
+                apt install -y nginx collectd git binutils
+                systemctl start nginx.service collectd.service
+                systemctl enable nginx.service collectd.service
+                echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /var/www/html/index.nginx-debian.html
+                wget https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+                dpkg -i -E ./amazon-cloudwatch-agent.deb
+                /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c ssm:${WebServersSSM}
+                systemctl restart amazon-cloudwatch-agent.service
+                systemctl enable amazon-cloudwatch-agent.service
+                git clone https://github.com/aws/efs-utils
+                ./efs-utils/build-deb.sh
+                apt-get -y install ./efs-utils/build/amazon-efs-utils*deb
+                mkdir -p /mnt/efs
+                echo "${EFSFileSystem}:/ /mnt/efs efs _netdev,noresvport,tls 0 0" | tee -a /etc/fstab
+                mount -a
+                rsync -aIv /mnt/efs/www/ /var/www/html
+                systemctl restart nginx.service
+            - Fn::Base64: !Sub |
+                #!/bin/bash -xe
+                yum update -y
+                yum install -y nginx collectd amazon-cloudwatch-agent amazon-efs-utils
+                systemctl start nginx.service
+                systemctl enable nginx.service
+                echo "<h1>${AWS::StackName} $(hostname -f)</h1>" > /usr/share/nginx/html/index.html
+                /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c ssm:${WebServersSSM}
+                systemctl restart amazon-cloudwatch-agent.service
+                systemctl enable amazon-cloudwatch-agent.service
+                mkdir -p /mnt/efs
+                echo "${EFSFileSystem}:/ /mnt/efs efs _netdev,noresvport,tls 0 0" | tee -a /etc/fstab
+                mount -a
+                rsync -aIv /mnt/efs/www/ /usr/share/nginx/html
+                systemctl restart nginx.service
+
+  # Creating a Target Group
+  EC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /index.html
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200
+      Name: !Sub "${AWS::StackName}-EC2TargetGroup"
+      Port: 80
+      Protocol: HTTP
+      ProtocolVersion: HTTP1
+      UnhealthyThresholdCount: 2
+      VpcId: !FindInMap [RegionMap, !Ref "AWS::Region", VPCId]
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # Creating an Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-ApplicationLB"
+      Scheme: internet-facing
+      Subnets: !FindInMap [RegionMap, !Ref "AWS::Region", Subnets]
+      SecurityGroups:
+        - !Ref ELBSecurityGroup
+      Type: application
+      IpAddressType: ipv4
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ApplicationLoadBalancer"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  HTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - Type: "forward"
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref EC2TargetGroup
+                Weight: 1
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: "HTTP"
+
+  #Creating autoscaling group with desired minimum and maximum size
+  EC2AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-EC2AutoScalingGroup"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EC2LaunchTemplate
+        Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref ParamAutoscalingMinSize
+      MaxSize: !Ref ParamAutoscalingMaxSize
+      DesiredCapacity: !Ref ParamAutoscalingDesiredCapacity
+      AvailabilityZones:
+        !FindInMap [RegionMap, !Ref "AWS::Region", AvailabilityZones]
+      MetricsCollection:
+        - Granularity: 1Minute
+      TargetGroupARNs:
+        - !Ref EC2TargetGroup
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+          PropagateAtLaunch: true
+
+  # Autoscaling Policy, scaling up when CPU utilization is above 80%
+  AutoScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref EC2AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref ParamAutoscalingScaleUpThreshold
+
+  # Create a CloudWatch Dashboard
+  CloudWatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-Dashboard"
+      DashboardBody: |
+        {
+            "widgets": [
+                {
+                    "type": "metric",
+                    "x": 0,
+                    "y": 0,
+                    "width": 10,
+                    "height": 6,
+                    "properties": {
+                        "metrics": [
+                            [
+                                "AWS/EC2",
+                                "CPUUtilization",
+                                "InstanceId",
+                                "i-04c3a061ee3e99f03"
+                            ]
+                        ],
+                        "period": 60,
+                        "stat": "Average",
+                        "region": "eu-west-1",
+                        "title": "EC2 Instance CPU Utilization"
+                    }
+                },
+                {
+                    "type": "metric",
+                    "x": 10,
+                    "y": 0,
+                    "width": 10,
+                    "height": 6,
+                    "properties": {
+                        "metrics": [
+                            [
+                                "AWS/EC2",
+                                "CPUUtilization",
+                                "InstanceId",
+                                "i-04c3a061ee3e99f03"
+                            ]
+                        ],
+                        "period": 60,
+                        "stat": "Average",
+                        "region": "eu-west-1",
+                        "title": "EC2 Instance CPU Utilization"
+                    }
+                },
+                {
+                    "type": "metric",
+                    "x": 20,
+                    "y": 0,
+                    "width": 4,
+                    "height": 6,
+                    "properties": {
+                        "metrics": [
+                            [
+                                "AWS/EC2",
+                                "CPUUtilization",
+                                "InstanceId",
+                                "i-04c3a061ee3e99f03"
+                            ]
+                        ],
+                        "period": 60,
+                        "stat": "Average",
+                        "region": "eu-west-1",
+                        "title": "EC2 Instance CPU Utilization",
+                        "view": "gauge",
+                        "yAxis": {
+                            "left": {
+                                "min": 0,
+                                "max": 100
+                            }
+                        }
+                    }
+                },
+                {
+                    "type": "log",
+                    "x": 0,
+                    "y": 6,
+                    "width": 24,
+                    "height": 12,
+                    "properties": {
+                        "region": "eu-west-1",
+                        "title": "Access log",
+                        "view": "table",
+                        "query": "SOURCE 'access.log' | fields @timestamp, @message, @logStream, @log | sort @timestamp DESC | LIMIT 20"
+                    }
+                }
+            ]
+        }
+
+Outputs:
+  # Outputs for the Application Load Balancer DNS Name
+  ApplicationLoadBalancerDNSName:
+    Description: Application Load Balancer DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  # Outputs for the Bastion Host Public DNS Name ONLY if Bastion Host is created
+  BastionHostPublicDNSName:
+    Condition: createBastionHost
+    Description: Bastion Host Public DNS Name
+    Value: !GetAtt BastionHost.PublicDnsName
+
+  # CloudWatch Dashboard URL
+  CloudWatchDashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-Dashboard"
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudWatchDashboardURL"
+  Subnet1:
+    Description: Subnet 1
+    Value: !Select [0,!FindInMap [RegionMap, !Ref "AWS::Region", Subnets]]
+  Subnet2:
+    Description: Subnet 2
+    Value: !Select [1,!FindInMap [RegionMap, !Ref "AWS::Region", Subnets]]
+  Subnet3:
+    Description: Subnet 3
+    Value: !Select [2,!FindInMap [RegionMap, !Ref "AWS::Region", Subnets]]
+
+  EFSFileSystemId:
+    Description: EFS File System ID
+    Value: !Ref EFSFileSystem
