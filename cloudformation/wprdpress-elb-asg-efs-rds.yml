@@ -290,5 +290,25 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}${ParamEnvironment}"
 
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn: AttachGateway
+    Properties:
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBInstanceIdentifier: !Sub "${AWS::StackName}-${DBInstanceIdentifier}"
+      DBName: !Ref DBName
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      Engine: MySQL
+      EngineVersion: "8.0.33"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      PubliclyAccessible: true
+      DeleteAutomatedBackups: true
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
 
 Outputs:
