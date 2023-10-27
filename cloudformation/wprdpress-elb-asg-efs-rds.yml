@@ -618,4 +618,15 @@ Resources:
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
           PropagateAtLaunch: true
 
+  # Autoscaling Policy, scaling up when CPU utilization is above 80%
+  AutoScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref ParamAutoscalingScaleUpThreshold
+
 Outputs:
