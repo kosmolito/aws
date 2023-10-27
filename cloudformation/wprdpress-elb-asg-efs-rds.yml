@@ -450,5 +450,34 @@ Resources:
                 Value: !Sub "${AWS::StackName}-wordpress-provision-template"
               - Key: Environment
                 Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+        UserData: 
+          Fn::Base64: 
+            Fn::Sub: 
+              - |
+                #!/bin/bash -xe
+                yum update -y
+                yum install -y httpd wget php-fpm php-mysqli php-json php php-devel amazon-efs-utils
+                systemctl start httpd php-fpm
+                systemctl enable httpd php-fpm
+                echo "${EFSFileSystem}:/ /var/www/html/ efs _netdev,noresvport,tls 0 0" | tee -a /etc/fstab
+                mount -a
+                curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+                chmod +x wp-cli.phar
+                sudo mv wp-cli.phar /bin/wp
+                echo "Waiting 30 seconds for efs to mount..."
+                sleep 30
+                cd /var/www/html
+                wp core download --path=/var/www/html --allow-root --force
+                while [ ! -f /var/www/html/wp-config-sample.php ]; do sleep 2; done
+                mv /var/www/html/wp-config-sample.php /var/www/html/wp-config.php -f
+                wp core config --path="/var/www/html" --allow-root --dbhost="${RDSEndpoint}" \
+                --dbname="${DBName}" --dbuser="${DBUsername}" --dbpass="${DBPassword}" --dbprefix="wp_" --force
+                wp core install --allow-root --url="http://${ApplicationLoadBalancerDNS}" --title="${WordPressSiteTitle}" \
+                --admin_user="${WordPressAdminUsername}" --admin_password=${WordPressAdminPassword} --admin_email="${WordPressAdminEmail}"
+                chown -R apache:apache /var/www/html
+                chmod -R 2755 /var/www/html
+              - RDSEndpoint: !GetAtt RDSInstance.Endpoint.Address
+                ApplicationLoadBalancerDNS: !GetAtt ApplicationLoadBalancer.DNSName
+                EFSFileSystem: !Ref EFSFileSystem
 
 Outputs:
