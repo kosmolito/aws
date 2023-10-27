@@ -259,5 +259,36 @@ Resources:
       SubnetId: !Ref PublicSubnetC
       RouteTableId: !Ref PublicRouteTable
 
+########################## RDS ##########################
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "allow-rds-traffic"
+      VpcId: !Ref myVPC
+
+  RDSIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: "0.0.0.0/0"
+      # SourceSecurityGroupId: !Ref RDSSecurityGroup
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for RDS"
+      SubnetIds:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+        - !Ref PublicSubnetC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-RDSSubnetGroup"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}${ParamEnvironment}"
+
 
 Outputs:
