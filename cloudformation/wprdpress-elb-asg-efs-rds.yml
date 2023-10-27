@@ -310,5 +310,23 @@ Resources:
     UpdateReplacePolicy: Delete
     DeletionPolicy: Delete
 
+  ########################## EFS ##########################
+
+  # Create an EFS File System Security Group allowing NFS traffic
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "allow-efs-traffic"
+      VpcId: !Ref myVPC
+
+  EFSIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EFSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref EFSSecurityGroup
+
 
 Outputs:
