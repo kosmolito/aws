@@ -549,4 +549,73 @@ Resources:
                 chown -R apache:apache /var/www/html
                 chmod -R 2755 /var/www/html
               - EFSFileSystem: !Ref EFSFileSystem
+
+  # Creating a Target Group
+  AutoScalingTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: 
+      - ApplicationLoadBalancer
+      - AutoScalingLaunchTemplate
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /index.html
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200
+      Name: !Sub "${AWS::StackName}-ASGTargetGroup"
+      Port: 80
+      Protocol: HTTP
+      ProtocolVersion: HTTP1
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # Creating an Application Load Balancer Listener, forwarding traffic to the target group
+  # and specifying the load balancer port and protocol 
+  HTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - Type: "forward"
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref AutoScalingTargetGroup
+                Weight: 1
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: "HTTP"
+
+  #Creating autoscaling group with desired minimum and maximum size
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: 
+      - HTTPlistener
+      - WordpressProvioner
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-AutoScalingGroup"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AutoScalingLaunchTemplate
+        Version: !GetAtt AutoScalingLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref ParamAutoscalingMinSize
+      MaxSize: !Ref ParamAutoscalingMaxSize
+      DesiredCapacity: !Ref ParamAutoscalingDesiredCapacity
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+        - !Ref PublicSubnetC
+      AvailabilityZones: 
+        Fn::GetAZs: !Ref AWS::Region
+      MetricsCollection:
+        - Granularity: 1Minute
+      TargetGroupARNs:
+        - !Ref AutoScalingTargetGroup
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+          PropagateAtLaunch: true
+
 Outputs:
