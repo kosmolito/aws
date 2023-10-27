@@ -512,4 +512,41 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
+  # AutoScaling Launch Template
+  AutoScalingLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - WordpressProvioner
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-ASGLaunchTemplate"
+      LaunchTemplateData:
+        ImageId:
+          !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+        InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+        KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+        SecurityGroupIds:
+          - !Ref AutoScalingSecurityGroup
+          - !Ref EFSSecurityGroup
+          - !Ref RDSSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-Autoscaling-instance"
+              - Key: Environment
+                Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+        UserData: 
+          Fn::Base64: 
+            Fn::Sub: 
+              - |
+                #!/bin/bash -xe
+                yum update -y
+                yum install -y httpd wget php-fpm php-mysqli php-json php php-devel amazon-efs-utils
+                systemctl start httpd php-fpm
+                systemctl enable httpd php-fpm
+                echo "${EFSFileSystem}:/ /var/www/html/ efs _netdev,noresvport,tls 0 0" | tee -a /etc/fstab
+                mount -a
+                chown -R apache:apache /var/www/html
+                chmod -R 2755 /var/www/html
+              - EFSFileSystem: !Ref EFSFileSystem
 Outputs:
