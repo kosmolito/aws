@@ -131,6 +131,18 @@ Parameters:
     ConstraintDescription: must be a number between 50 and 100.
 
 Mappings:
+  RegionMap:
+    # Details for eu-west-1
+    eu-west-1:
+      InstanceType: t2.micro
+      AMI: ami-0f3164307ee5d695a
+      SSHKeyName: aws_rsa.pub
+    # Details for eu-north-1
+    eu-north-1:
+      InstanceType: t3.micro
+      AMI: ami-071df4a41c6f9ee2e
+      SSHKeyName: aws_rsa.pub
+
 Resources:
 
 Outputs:
