@@ -629,4 +629,21 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: !Ref ParamAutoscalingScaleUpThreshold
 
+  # Create a resource group based on CloudFormation stack
+  StackResourceGroup:
+    Type: "AWS::ResourceGroups::Group" 
+    Properties: 
+      Name: "StackResourceGroup" 
+      Description: "Resource group for the stack" 
+      ResourceQuery: 
+        Type: "CLOUDFORMATION_STACK_1_0"
+      Tags:
+        - Key: Type
+          Value: "ResourceGroup"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ResourceGroup"
+
+
 Outputs:
