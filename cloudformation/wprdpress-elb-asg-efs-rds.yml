@@ -480,4 +480,18 @@ Resources:
                 ApplicationLoadBalancerDNS: !GetAtt ApplicationLoadBalancer.DNSName
                 EFSFileSystem: !Ref EFSFileSystem
 
+  # Create a EC2 Based on Provision Launch Template
+  WordpressProvioner:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      LaunchTemplate:
+        LaunchTemplateId: !Ref ProvisionTemplate
+        Version: !GetAtt ProvisionTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-wordpress-provioner"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
 Outputs:
