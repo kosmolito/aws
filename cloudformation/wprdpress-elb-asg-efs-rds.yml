@@ -407,5 +407,48 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
+  ProvisionTemplateSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH and HTTP traffic"
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  # Creating a Launch Template
+  ProvisionTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn: 
+      - MountTargetResource1
+      - MountTargetResource2
+      - MountTargetResource3
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-EC2LaunchTemplate"
+      LaunchTemplateData:
+        ImageId:
+          !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+        InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+        KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+        SecurityGroupIds:
+          - !Ref ProvisionTemplateSG
+          - !Ref EFSSecurityGroup
+          - !Ref RDSSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-wordpress-provision-template"
+              - Key: Environment
+                Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
 Outputs:
