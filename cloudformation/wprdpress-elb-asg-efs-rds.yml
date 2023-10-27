@@ -328,5 +328,45 @@ Resources:
       ToPort: 2049
       SourceSecurityGroupId: !Ref EFSSecurityGroup
 
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    DependsOn: AttachGateway
+    DeletionPolicy: Delete
+    # UpdateReplacePolicy: Delete
+    Properties:
+      Encrypted: true
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      FileSystemTags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+
+  MountTargetResource1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
+  MountTargetResource3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId: !Ref PublicSubnetC
+      SecurityGroups:
+        - !Ref EFSSecurityGroup
+
 
 Outputs:
