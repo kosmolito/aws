@@ -1,0 +1,15 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Create a WordPress site with an Application Load Balancer, Auto Scaling Group, EFS, RDS.
+  The WordPress site is provisioned using a Launch Template and a CloudFormation EC2 instance.
+  A provisioner EC2 instance is used to provision the WordPress site, including the database setup to RDS and the EFS mount.
+  The provisioner EC2 instance is terminated after the WordPress site is provisioned.
+  The WordPress site is accessible via the Application Load Balancer.
+  The application is decoupled from the data layer, which is stored in RDS and EFS, making it easy to scale the application layer.
+
+Parameters:
+Mappings:
+Resources:
+
+Outputs:
