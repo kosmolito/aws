@@ -494,4 +494,22 @@ Resources:
         - Key: Environment
           Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
 
+  # EC2 Security Group Allowing Port 80 through the Load Balancer Security Group
+  AutoScalingSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH and HTTP access to ec2 instances"
+      VpcId: !Ref myVPC
+      # Security Group Ingress for SSH and HTTP
+      SecurityGroupIngress:
+        # HTTP access from ELB Security Group only
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId:
+            Ref: ApplicationLoadBalancerSG
+      Tags:
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
 Outputs:
