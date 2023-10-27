@@ -145,4 +145,34 @@ Mappings:
 
 Resources:
 
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPC"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: myVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-InternetGateway"
+        - Key: Environment
+          Value: !Sub "${AWS::StackName}-${ParamEnvironment}"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref InternetGateway
+
+
 Outputs:
