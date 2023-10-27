@@ -9,6 +9,127 @@ Description: >
   The application is decoupled from the data layer, which is stored in RDS and EFS, making it easy to scale the application layer.
 
 Parameters:
+  ParamEnvironment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment to deploy to (dev or prod)
+    ConstraintDescription: must be either dev or prod.
+
+  DBInstanceIdentifier:
+    Default: dbinstance
+    Description: My database instance
+    Type: String
+    MinLength: "1"
+    MaxLength: "63"
+    AllowedPattern: "[a-zA-Z0-9]*[a-zA-Z0-9]*"
+    ConstraintDescription: >-
+      Must begin with a letter and must not end with a hyphen or contain two
+      consecutive hyphens.
+
+  DBAllocatedStorage:
+    Default: "20"
+    Description: The size of the database (GiB)
+    Type: Number
+    MinValue: "20"
+    MaxValue: "120"
+    ConstraintDescription: must be between 20 and 65536 GiB.
+
+  DBName:
+    Default: wordpressdb
+    Description: My database
+    Type: String
+    MinLength: "1"
+    MaxLength: "64"
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: Must begin with a letter and contain only alphanumeric characters.
+
+  DBUsername:
+    Default: "admin"
+    NoEcho: "true"
+    Description: Username for MySQL database access
+    Type: String
+    MinLength: "1"
+    MaxLength: "16"
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+
+  DBPassword:
+    Default: "MyInsecurePassword"
+    NoEcho: "true"
+    Description: Password MySQL database access
+    Type: String
+    MinLength: "8"
+    MaxLength: "41"
+    AllowedPattern: "[a-zA-Z0-9]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+
+  WordPressSiteTitle:
+    Default: "My WordPress Site"
+    Description: The title of the WordPress site
+    Type: String
+    MinLength: "4"
+    MaxLength: "64"
+    ConstraintDescription: Must be between 4 - 64 characters.
+
+  WordPressAdminUsername:
+    Default: "admin"
+    Description: Username for WordPress admin access
+    Type: String
+    MinLength: "5"
+    MaxLength: "16"
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+
+  WordPressAdminPassword:
+    Default: "MyInsecurePassword"
+    NoEcho: "true"
+    Description: Password for WordPress admin access
+    Type: String
+    MinLength: "8"
+    MaxLength: "41"
+    AllowedPattern: "[a-zA-Z0-9]*"
+    ConstraintDescription: must contain only alphanumeric characters.
+
+  WordPressAdminEmail:
+    Default: "user@example.com"
+    Description: Email for WordPress admin access
+    Type: String
+    MinLength: "5"
+    MaxLength: "64"
+    ConstraintDescription: must contain only alphanumeric characters.
+
+  DBInstanceClass:
+    Default: db.t3.micro
+    Description: DB instance class
+    Type: String
+    ConstraintDescription: Must select a valid DB instance type.
+
+  ParamAutoscalingDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of EC2 instances for autoscaling group
+
+  ParamAutoscalingMaxSize:
+    Type: Number
+    Default: 4
+    Description: Maximum number of EC2 instances for autoscaling group
+
+  ParamAutoscalingMinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum number of EC2 instances for autoscaling group
+
+  ParamAutoscalingScaleUpThreshold:
+    Type: Number
+    Default: 80
+    MinValue: 50
+    MaxValue: 100
+    Description: CPU utilization threshold for scaling up
+    ConstraintDescription: must be a number between 50 and 100.
+
 Mappings:
 Resources:
 
