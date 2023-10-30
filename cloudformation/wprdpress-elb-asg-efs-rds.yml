@@ -197,6 +197,7 @@ Resources:
       Protocol: email
       TopicArn: !Ref SNSTopic
 
+  ############################# VPC #############################
   myVPC:
     Type: AWS::EC2::VPC
     Properties:
