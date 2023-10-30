@@ -145,6 +145,58 @@ Mappings:
 
 Resources:
 
+########################## SNS ##########################
+# Create IAM Role to Send SNS on the EC2
+  SNSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-SNSRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-SNSPolicy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: "*"
+
+# Create an IAM Instance Profile for SNS Role
+  SNSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-SNSInstanceProfile"
+      Path: "/"
+      Roles:
+        - !Ref SNSRole
+
+# Create a sns topic
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "${AWS::StackName}-WordPress"
+      Subscription:
+        - Endpoint: !Ref WordPressAdminEmail
+          Protocol: email
+
+# Create a sns topic subscription
+  SNSTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref WordPressAdminEmail
+      Protocol: email
+      TopicArn: !Ref SNSTopic
+
   myVPC:
     Type: AWS::EC2::VPC
     Properties:
