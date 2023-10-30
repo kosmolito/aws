@@ -562,6 +562,10 @@ Resources:
   WordpressProvioner:
     Type: AWS::EC2::Instance
     Properties:
+      # This Role is used to be able to send SNS message
+      IamInstanceProfile: !Ref SNSInstanceProfile
+      # Terminate the instance when the provisioning is done
+      InstanceInitiatedShutdownBehavior: terminate
       SubnetId: !Ref PublicSubnetA
       LaunchTemplate:
         LaunchTemplateId: !Ref ProvisionTemplate
