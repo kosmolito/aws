@@ -528,9 +528,35 @@ Resources:
                 --admin_user="${WordPressAdminUsername}" --admin_password=${WordPressAdminPassword} --admin_email="${WordPressAdminEmail}"
                 chown -R apache:apache /var/www/html
                 chmod -R 2755 /var/www/html
+
+                EXPECTED_TITLE="${WordPressSiteTitle}"
+                max_retries=40
+                retry_count=0
+
+                while [ $retry_count -lt $max_retries ]; do
+                    ACTUAL_TITLE=$(curl http://${ApplicationLoadBalancerDNS} | grep -e "<title>.*</title>" | sed -e 's/<[^>]*>//g')
+                    if [ "$ACTUAL_TITLE" != "$EXPECTED_TITLE" ]; then
+                        sleep 30
+                        ((retry_count++))
+                    else
+                        aws sns publish --topic-arn ${SNSTopic} --message "Your WordPress site is ready. Please visit http://${ApplicationLoadBalancerDNS} to access your site."
+                        shutdown now -h
+                        break
+                    fi
+                done
+
+                if [ $retry_count -eq $max_retries ]; then
+                    echo "Maximum retries reached."
+                fi
+
+                # WEBSITE_TITLE_STATUS=$(curl http://${ApplicationLoadBalancerDNS} | grep -e "<title>.*</title>")
+                # while [ -z "$WEBSITE_TITLE_STATUS" ]; do sleep 2; done
+                # aws sns publish --topic-arn ${SNSTopic} --message "Your WordPress site is ready. Please visit http://${ApplicationLoadBalancerDNS} to access your site."
               - RDSEndpoint: !GetAtt RDSInstance.Endpoint.Address
                 ApplicationLoadBalancerDNS: !GetAtt ApplicationLoadBalancer.DNSName
                 EFSFileSystem: !Ref EFSFileSystem
+                SNSTopic: !Ref SNSTopic
+                WordPressSiteTitle: !Ref WordPressSiteTitle
 
   # Create a EC2 Based on Provision Launch Template
   WordpressProvioner:
