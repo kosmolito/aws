@@ -326,8 +326,7 @@ Resources:
       IpProtocol: tcp
       FromPort: 3306
       ToPort: 3306
-      CidrIp: "0.0.0.0/0"
-      # SourceSecurityGroupId: !Ref RDSSecurityGroup
+      SourceSecurityGroupId: !Ref RDSSecurityGroup
 
   RDSSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
@@ -549,10 +548,6 @@ Resources:
                 if [ $retry_count -eq $max_retries ]; then
                     echo "Maximum retries reached."
                 fi
-
-                # WEBSITE_TITLE_STATUS=$(curl http://${ApplicationLoadBalancerDNS} | grep -e "<title>.*</title>")
-                # while [ -z "$WEBSITE_TITLE_STATUS" ]; do sleep 2; done
-                # aws sns publish --topic-arn ${SNSTopic} --message "Your WordPress site is ready. Please visit http://${ApplicationLoadBalancerDNS} to access your site."
               - RDSEndpoint: !GetAtt RDSInstance.Endpoint.Address
                 ApplicationLoadBalancerDNS: !GetAtt ApplicationLoadBalancer.DNSName
                 EFSFileSystem: !Ref EFSFileSystem
