@@ -1,0 +1,10 @@
+[
+    {
+        "ParameterKey": "ParamRepositoryName",
+        "ParameterValue": "MyApplication"
+    },
+    {
+        "ParameterKey": "ParamRepositoryDescription",
+        "ParameterValue": "Test Docker Application"
+    }
+ ]

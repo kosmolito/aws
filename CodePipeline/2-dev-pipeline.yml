@@ -1,0 +1,179 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This template creates a CodePipeline for developers to deploy their code to. It will create a CodeCommit repository, a CodeBuild project, and a CodePipeline pipeline.
+
+Parameters:
+
+  ParamRepositoryName:
+    Type: String
+    # Default: MyContainerRepo
+    Description: Name of the existing CodeCommit repository
+    ConstraintDescription: must be a valid CodeCommit repository name.
+
+  ParamRepositoryDescription:
+    Type: String
+    # Default: MyContainerRepo
+    Description: Description of the CodeCommit repository to create
+    ConstraintDescription: must be a valid CodeCommit repository description.
+
+Mappings:
+  env:
+    prod:
+      VPCName: prod-VPC
+      VPCCIDR: 10.20.0.0/16
+      PublicSubnetACIDR: 10.20.0.0/20
+      PublicSubnetBCIDR: 10.20.16.0/20
+      PublicSubnetCCIDR: 10.20.32.0/20
+    dev:
+      VPCCIDR: 10.10.0.0/16
+      PublicSubnetACIDR: 10.10.0.0/20
+      PublicSubnetBCIDR: 10.10.16.0/20
+      PublicSubnetCCIDR: 10.10.32.0/20
+
+Resources:
+
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref ParamRepositoryName
+      RepositoryDescription: !Ref ParamRepositoryDescription
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamRepositoryName}-${AWS::StackName}"
+      Code:
+        BranchName: main
+        S3:
+          Bucket: !Sub "dev-codepipeline-${AWS::Region}-502377582075"
+          Key: "codecommit-basic-template.zip"
+
+
+  # Create a ECR Repository for the images
+  ECRRepository: 
+    Type: AWS::ECR::Repository
+    Properties: 
+      RepositoryName: !Ref ParamRepositoryName
+
+      # Only Lower Letters are allowed (Need to fix this)
+      # - Key: Lower
+      #   Value:
+      #     'Fn::Transform':
+      #         Name: 'String'
+      #         Parameters:
+      #           InputString: !Ref ParamRepositoryName
+      #           Operation: Lower      
+      ImageScanningConfiguration: 
+        ScanOnPush: false
+
+  BuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CodeBuildServiceRole-${ParamRepositoryName}-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+      Policies:
+        - PolicyName: !Sub "CodeBuildServicePolicy-${ParamRepositoryName}-${AWS::StackName}"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${ParamRepositoryName}" # CodeBuild logs
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${ParamRepositoryName}:*" # CodeBuild logs
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub "arn:aws:s3:::codepipeline-${AWS::Region}-*" # CodePipeline artifacts bucket
+              - Effect: Allow
+                Action:
+                  - codecommit:GitPull
+                Resource:
+                  - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${ParamRepositoryName}" # CodeCommit repository
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                  - codebuild:BatchPutCodeCoverages
+                Resource:
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/BuildProject-${ParamRepositoryName}-*" # CodeBuild reports
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "BuildProject-${ParamRepositoryName}"
+      Description: !Sub "BuildProject-${ParamRepositoryName}-${AWS::StackName}"
+      ServiceRole: !Ref BuildServiceRole
+      Artifacts:
+        Type: NO_ARTIFACTS
+      BadgeEnabled: false
+      Cache:
+        Type: NO_CACHE
+      Environment: # use Ubuntu standard v7
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: true
+      TimeoutInMinutes: 60
+      QueuedTimeoutInMinutes: 480
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+        S3Logs:
+          Status: DISABLED
+      Source:
+        Type: CODECOMMIT
+        Location: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${ParamRepositoryName}"
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - ACCOUNT_ID=${AWS::AccountId}
+                - REGION=${AWS::Region}
+                - REGISTRY_URI=502377582075.dkr.ecr.$REGION.amazonaws.com
+                # Fill in Docker information
+                - IMAGE_NAME=$(echo ${ParamRepositoryName} | tr '[:upper:]' '[:lower:]') # Docker image name
+                # Fill in ECS information
+                - CONTAINER_NAME=${ParamRepositoryName}Container # TaskDefinition: container definition name (Wrapper for imageUri)
+                # -----------------------
+                - IMAGE=$REGISTRY_URI/$IMAGE_NAME
+                - COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
+                - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URI
+            build:
+              commands:
+                - docker build --tag $IMAGE .
+                - docker tag $IMAGE $IMAGE:$COMMIT
+            post_build:
+              commands:
+                - docker push $IMAGE
+                - docker push $IMAGE:$COMMIT
+                # Create imagedefinitions.json. This is used by ECS to know which docker image to use.
+                - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $IMAGE:$COMMIT > imagedefinitions.json
+          artifacts:
+            files:
+              # Put imagedefinitions.json in the artifact zip file
+              - imagedefinitions.json
+        GitCloneDepth: 1
+        GitSubmodulesConfig:
+          FetchSubmodules: false

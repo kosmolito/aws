@@ -1,0 +1,254 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Creating Network infrastructure and ECS Cluster for the development environment.
+
+Parameters:
+  ParamEnvironment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment to deploy to (dev or prod)
+    ConstraintDescription: must be either dev or prod.
+
+  ECSClusterName:
+    Type: String
+    Default: MyCluster
+    Description: Specifies the ECS Cluster Name with which the resources would be associated
+
+Mappings:
+  env:
+    prod:
+      VPCCIDR: 10.20.0.0/16
+      PublicSubnetACIDR: 10.20.0.0/20
+      PublicSubnetBCIDR: 10.20.16.0/20
+      PublicSubnetCCIDR: 10.20.32.0/20
+      ECRRepoName: prod-ecr-repo
+    dev:
+      VPCCIDR: 10.10.0.0/16
+      PublicSubnetACIDR: 10.10.0.0/20
+      PublicSubnetBCIDR: 10.10.16.0/20
+      PublicSubnetCCIDR: 10.10.32.0/20
+      ECRRepoName: dev-ecr-repo
+
+Resources:
+  ############################# VPC #############################
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !FindInMap [env, !Ref ParamEnvironment, VPCCIDR]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-VPC-${AWS::StackName}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: myVPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-IGW-${AWS::StackName}-"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  ############################# PUBLIC SUBNETS #############################
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref AWS::Region
+      VpcId: !Ref myVPC
+      CidrBlock: !FindInMap [env, !Ref ParamEnvironment, PublicSubnetACIDR]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-PublicSubnetA-${AWS::StackName}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref AWS::Region
+      VpcId: !Ref myVPC
+      CidrBlock: !FindInMap [env, !Ref ParamEnvironment, PublicSubnetBCIDR]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-PublicSubnetB-${AWS::StackName}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  PublicSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref AWS::Region
+      VpcId: !Ref myVPC
+      CidrBlock: !FindInMap [env, !Ref ParamEnvironment, PublicSubnetCCIDR]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-PublicSubnetC-${AWS::StackName}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  ############################# ROUTE TABLES #############################
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-PublicRouteTable-${AWS::StackName}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  # Public route table has direct routing to IGW
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  ############################# ROUTE TABLE ASSOCIATIONS #############################
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetC
+      RouteTableId: !Ref PublicRouteTable
+
+
+  ############################ ECS CLUSTER #############################
+
+  ECSHTTPServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS HTTP Service Security Group
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ParamEnvironment}-${ECSClusterName}"
+      CapacityProviders:
+      - FARGATE
+      - FARGATE_SPOT
+      ClusterSettings:
+      - Name: containerInsights
+        Value: disabled
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
+      ServiceConnectDefaults:
+        Namespace: !Ref ECSClusterName
+      Tags: 
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-${ECSClusterName}-${AWS::StackName}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      CapacityProviderStrategy:
+      - CapacityProvider: FARGATE
+        Base: 0
+        Weight: 1
+      TaskDefinition: arn:aws:ecs:eu-west-1:502377582075:task-definition/DockerDemoPipeline20231109:1
+      ServiceName: DockerDemoService
+      SchedulingStrategy: REPLICA
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ECSHTTPServiceSecurityGroup
+          Subnets:
+            - !Ref PublicSubnetA
+            - !Ref PublicSubnetB
+            - !Ref PublicSubnetC
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DeploymentController:
+        Type: ECS
+      ServiceConnectConfiguration:
+        Enabled: false
+      Tags: []
+      EnableECSManagedTags: true
+
+  # Create a ECR Repository for the images
+  ECRRepository: 
+    Type: AWS::ECR::Repository
+    Properties: 
+      RepositoryName: !FindInMap [env, !Ref ParamEnvironment, ECRRepoName]
+      ImageScanningConfiguration: 
+        ScanOnPush: false
+
+  MyS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ParamEnvironment}-codepipeline-${AWS::Region}-${AWS::AccountId}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-codepipeline-${AWS::Region}-${AWS::AccountId}"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+
+  StackResourceGroup:
+    Type: "AWS::ResourceGroups::Group" 
+    Properties: 
+      Name: !Sub "${ParamEnvironment}-StackResourceGroup-${AWS::StackName}"
+      Description: "Resource group for the stack" 
+      ResourceQuery: 
+        Type: "CLOUDFORMATION_STACK_1_0"
+      Tags:
+        - Key: Type
+          Value: "ResourceGroup"
+        - Key: Environment
+          Value: !Sub "${ParamEnvironment}"
+        - Key: Name
+          Value: !Sub "${ParamEnvironment}-ResourceGroup-${AWS::StackName}"
