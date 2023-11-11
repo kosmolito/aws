@@ -1,10 +1,14 @@
 [
     {
-        "ParameterKey": "ParamRepositoryName",
+        "ParameterKey": "CodeCommitRepositoryName",
         "ParameterValue": "MyApplication"
     },
     {
-        "ParameterKey": "ParamRepositoryDescription",
+        "ParameterKey": "CodeCommitRepositoryDescription",
         "ParameterValue": "Test Docker Application"
+    },
+    {
+        "ParameterKey": "ECRRepositoryName",
+        "ParameterValue": "myapplication"
     }
  ]

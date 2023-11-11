@@ -5,17 +5,24 @@ Description: >
 
 Parameters:
 
-  ParamRepositoryName:
+  CodeCommitRepositoryName:
     Type: String
-    # Default: MyContainerRepo
-    Description: Name of the existing CodeCommit repository
+    AllowedPattern: ^[a-zA-Z0-9._\-]+(?<!\.git)$
+    Description: Enter a name for the CodeCommit repository to create
     ConstraintDescription: must be a valid CodeCommit repository name.
 
-  ParamRepositoryDescription:
+  CodeCommitRepositoryDescription:
     Type: String
     # Default: MyContainerRepo
     Description: Description of the CodeCommit repository to create
     ConstraintDescription: must be a valid CodeCommit repository description.
+
+  ECRRepositoryName:
+    Type: String
+    AllowedPattern: ^[a-z0-9/-]{2,256}$
+    Description: Enter a name for the ECR repository to create (must be lowercase) (e.g. mycontainerrepo)
+    ConstraintDescription: >
+      The ECR repository name must start with a letter and can only contain lowercase letters, numbers, hyphens, underscores, and forward slashes.
 
 Mappings:
   env:
@@ -36,11 +43,11 @@ Resources:
   CodeCommitRepository:
     Type: AWS::CodeCommit::Repository
     Properties:
-      RepositoryName: !Ref ParamRepositoryName
-      RepositoryDescription: !Ref ParamRepositoryDescription
+      RepositoryName: !Ref CodeCommitRepositoryName
+      RepositoryDescription: !Ref CodeCommitRepositoryDescription
       Tags:
         - Key: Name
-          Value: !Sub "${ParamRepositoryName}-${AWS::StackName}"
+          Value: !Sub "${CodeCommitRepositoryName}-${AWS::StackName}"
       Code:
         BranchName: main
         S3:
@@ -52,23 +59,14 @@ Resources:
   ECRRepository: 
     Type: AWS::ECR::Repository
     Properties: 
-      RepositoryName: !Ref ParamRepositoryName
-
-      # Only Lower Letters are allowed (Need to fix this)
-      # - Key: Lower
-      #   Value:
-      #     'Fn::Transform':
-      #         Name: 'String'
-      #         Parameters:
-      #           InputString: !Ref ParamRepositoryName
-      #           Operation: Lower      
+      RepositoryName: !Ref ECRRepositoryName
       ImageScanningConfiguration: 
         ScanOnPush: false
 
   BuildServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "CodeBuildServiceRole-${ParamRepositoryName}-${AWS::StackName}"
+      RoleName: !Sub "CodeBuildServiceRole-${CodeCommitRepositoryName}-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -78,50 +76,59 @@ Resources:
                 - codebuild.amazonaws.com
             Action:
               - sts:AssumeRole
-      Path: /
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
-      Policies:
-        - PolicyName: !Sub "CodeBuildServicePolicy-${ParamRepositoryName}-${AWS::StackName}"
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${ParamRepositoryName}" # CodeBuild logs
-                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${ParamRepositoryName}:*" # CodeBuild logs
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:GetBucketAcl
-                  - s3:GetBucketLocation
-                Resource:
-                  - !Sub "arn:aws:s3:::codepipeline-${AWS::Region}-*" # CodePipeline artifacts bucket
-              - Effect: Allow
-                Action:
-                  - codecommit:GitPull
-                Resource:
-                  - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${ParamRepositoryName}" # CodeCommit repository
-              - Effect: Allow
-                Action:
-                  - codebuild:CreateReportGroup
-                  - codebuild:CreateReport
-                  - codebuild:UpdateReport
-                  - codebuild:BatchPutTestCases
-                  - codebuild:BatchPutCodeCoverages
-                Resource:
-                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/BuildProject-${ParamRepositoryName}-*" # CodeBuild reports
+
+  BuildServicePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: 
+      - ECRRepository
+      - BuildProject
+      - CodeCommitRepository
+    Properties:
+      PolicyName: !Sub "CodeBuildPolicy-${CodeCommitRepositoryName}-${AWS::StackName}"
+      Roles: 
+        - !Ref BuildServiceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${CodeCommitRepositoryName}" # CodeBuild logs
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${CodeCommitRepositoryName}:*" # CodeBuild logs
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:GetObjectVersion
+              - s3:GetBucketAcl
+              - s3:GetBucketLocation
+            Resource:
+              - !Sub "arn:aws:s3:::codepipeline-${AWS::Region}-*" # CodePipeline artifacts bucket
+          - Effect: Allow
+            Action:
+              - codecommit:GitPull
+            Resource:
+              - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepositoryName}" # CodeCommit repository
+          - Effect: Allow
+            Action:
+              - codebuild:CreateReportGroup
+              - codebuild:CreateReport
+              - codebuild:UpdateReport
+              - codebuild:BatchPutTestCases
+              - codebuild:BatchPutCodeCoverages
+            Resource:
+              - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/BuildProject-${CodeCommitRepositoryName}-*" # CodeBuild reports
 
   BuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub "BuildProject-${ParamRepositoryName}"
-      Description: !Sub "BuildProject-${ParamRepositoryName}-${AWS::StackName}"
+      Name: !Sub "BuildProject-${CodeCommitRepositoryName}"
+      Description: !Sub "BuildProject for ${CodeCommitRepositoryName} - Stack: ${AWS::StackName}"
       ServiceRole: !Ref BuildServiceRole
       Artifacts:
         Type: NO_ARTIFACTS
@@ -142,8 +149,11 @@ Resources:
         S3Logs:
           Status: DISABLED
       Source:
+        GitCloneDepth: 1
+        GitSubmodulesConfig:
+          FetchSubmodules: false
         Type: CODECOMMIT
-        Location: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${ParamRepositoryName}"
+        Location: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${CodeCommitRepositoryName}"
         BuildSpec: !Sub |
           version: 0.2
           phases:
@@ -153,9 +163,9 @@ Resources:
                 - REGION=${AWS::Region}
                 - REGISTRY_URI=502377582075.dkr.ecr.$REGION.amazonaws.com
                 # Fill in Docker information
-                - IMAGE_NAME=$(echo ${ParamRepositoryName} | tr '[:upper:]' '[:lower:]') # Docker image name
+                - IMAGE_NAME=${ECRRepository}
                 # Fill in ECS information
-                - CONTAINER_NAME=${ParamRepositoryName}Container # TaskDefinition: container definition name (Wrapper for imageUri)
+                - CONTAINER_NAME=${ECRRepository}Container # TaskDefinition: container definition name (Wrapper for imageUri)
                 # -----------------------
                 - IMAGE=$REGISTRY_URI/$IMAGE_NAME
                 - COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
@@ -174,6 +184,8 @@ Resources:
             files:
               # Put imagedefinitions.json in the artifact zip file
               - imagedefinitions.json
-        GitCloneDepth: 1
-        GitSubmodulesConfig:
-          FetchSubmodules: false
+
+Outputs:
+     CodeCommitRepositoryCloneUrlHttp:
+       Description: "CodeCommit repository clone URL over HTTPS"
+       Value: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${CodeCommitRepositoryName}"
