@@ -27,16 +27,27 @@ Parameters:
 Mappings:
   env:
     prod:
-      VPCName: prod-VPC
+      VPCName: prod-VPC-stack1
+      VPCId: vpc-0f753859f4d2d23fd
       VPCCIDR: 10.20.0.0/16
       PublicSubnetACIDR: 10.20.0.0/20
       PublicSubnetBCIDR: 10.20.16.0/20
       PublicSubnetCCIDR: 10.20.32.0/20
+      # ECSCLusterName: prod-ecs-cluster
+      ECSCLusterName: prod-MyCluster
     dev:
+      VPCName: dev-VPC-stack1
+      VPCId: vpc-0f753859f4d2d23fd
       VPCCIDR: 10.10.0.0/16
       PublicSubnetACIDR: 10.10.0.0/20
       PublicSubnetBCIDR: 10.10.16.0/20
       PublicSubnetCCIDR: 10.10.32.0/20
+      # ECSCLusterName: dev-ecs-cluster
+      ECSCLusterName: dev-MyCluster
+      SubnetIds:
+        - subnet-071d9fa5a7e8b5b2a
+        - subnet-0e18a162d587f1f22
+        - subnet-0b99a57bc151a6459
 
 Resources:
 
@@ -62,6 +73,55 @@ Resources:
       RepositoryName: !Ref ECRRepositoryName
       ImageScanningConfiguration: 
         ScanOnPush: false
+
+  TaskDefinitionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "TaskDefinitionRole-${ECRRepositoryName}-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # ECS Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ECRRepositoryName}TaskDefinition"
+      Cpu: 256
+      Memory: 512
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt TaskDefinitionRole.Arn
+      # TaskRoleArn: !Ref TaskDefinitionRole
+      ContainerDefinitions:
+        - Name: !Sub "${ECRRepositoryName}Container"
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepositoryName}"
+          PortMappings:
+            - Name: !Sub "${ECRRepositoryName}-80-tcp"
+              ContainerPort: 80
+              HostPort: 80
+              Protocol: tcp
+              AppProtocol: http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-group: !Sub "/ecs/${ECRRepositoryName}TaskDefinition"
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
 
   BuildServiceRole:
     Type: AWS::IAM::Role
@@ -184,6 +244,281 @@ Resources:
             files:
               # Put imagedefinitions.json in the artifact zip file
               - imagedefinitions.json
+
+  PipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CodePipelineServiceRole-${AWS::Region}-${CodeCommitRepositoryName}-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+
+  PipelineServicePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: 
+      - ECRRepository
+      - BuildProject
+      - CodeCommitRepository
+    Properties:
+      PolicyName: !Sub "CodePipelineServicePolicy-${AWS::Region}-${CodeCommitRepositoryName}-${AWS::StackName}"
+      Roles: 
+        - !Ref PipelineServiceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action:
+          - iam:PassRole
+          Resource: "*"
+          Effect: Allow
+          Condition:
+            StringEqualsIfExists:
+              iam:PassedToService:
+              - cloudformation.amazonaws.com
+              - elasticbeanstalk.amazonaws.com
+              - ec2.amazonaws.com
+              - ecs-tasks.amazonaws.com
+        - Action:
+          - codecommit:CancelUploadArchive
+          - codecommit:GetBranch
+          - codecommit:GetCommit
+          - codecommit:GetRepository
+          - codecommit:GetUploadArchiveStatus
+          - codecommit:UploadArchive
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - codedeploy:CreateDeployment
+          - codedeploy:GetApplication
+          - codedeploy:GetApplicationRevision
+          - codedeploy:GetDeployment
+          - codedeploy:GetDeploymentConfig
+          - codedeploy:RegisterApplicationRevision
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - codestar-connections:UseConnection
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - elasticbeanstalk:*
+          - ec2:*
+          - elasticloadbalancing:*
+          - autoscaling:*
+          - cloudwatch:*
+          - s3:*
+          - sns:*
+          - cloudformation:*
+          - rds:*
+          - sqs:*
+          - ecs:*
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - lambda:InvokeFunction
+          - lambda:ListFunctions
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - opsworks:CreateDeployment
+          - opsworks:DescribeApps
+          - opsworks:DescribeCommands
+          - opsworks:DescribeDeployments
+          - opsworks:DescribeInstances
+          - opsworks:DescribeStacks
+          - opsworks:UpdateApp
+          - opsworks:UpdateStack
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - cloudformation:CreateStack
+          - cloudformation:DeleteStack
+          - cloudformation:DescribeStacks
+          - cloudformation:UpdateStack
+          - cloudformation:CreateChangeSet
+          - cloudformation:DeleteChangeSet
+          - cloudformation:DescribeChangeSet
+          - cloudformation:ExecuteChangeSet
+          - cloudformation:SetStackPolicy
+          - cloudformation:ValidateTemplate
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - codebuild:BatchGetBuilds
+          - codebuild:StartBuild
+          - codebuild:BatchGetBuildBatches
+          - codebuild:StartBuildBatch
+          Resource: "*"
+          Effect: Allow
+        - Effect: Allow
+          Action:
+          - devicefarm:ListProjects
+          - devicefarm:ListDevicePools
+          - devicefarm:GetRun
+          - devicefarm:GetUpload
+          - devicefarm:CreateUpload
+          - devicefarm:ScheduleRun
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - servicecatalog:ListProvisioningArtifacts
+          - servicecatalog:CreateProvisioningArtifact
+          - servicecatalog:DescribeProvisioningArtifact
+          - servicecatalog:DeleteProvisioningArtifact
+          - servicecatalog:UpdateProduct
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - cloudformation:ValidateTemplate
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - ecr:DescribeImages
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - states:DescribeExecution
+          - states:DescribeStateMachine
+          - states:StartExecution
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - appconfig:StartDeployment
+          - appconfig:StopDeployment
+          - appconfig:GetDeployment
+          Resource: "*"
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "Pipeline-${CodeCommitRepositoryName}"
+      RoleArn: !GetAtt PipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: "codepipeline-eu-west-1-969941146089"
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                RepositoryName: !Ref CodeCommitRepositoryName
+                BranchName: main
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref BuildProject
+              RunOrder: 1
+        # - Name: Deploy
+        #   Actions:
+        #     - Name: DeployAction
+        #       ActionTypeId:
+        #         Category: Deploy
+        #         Owner: AWS
+        #         Version: 1
+        #         Provider: CodeDeployToECS
+        #       InputArtifacts:
+        #         - Name: BuildOutput
+        #       Configuration:
+        #         AppSpecTemplateArtifact: BuildOutput
+        #         AppSpecTemplatePath: imagedefinitions.json
+        #         ApplicationName: !Ref ECRRepository
+        #         DeploymentGroupName: !Ref ECRRepository
+        #       RunOrder: 1
+
+  ECSServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${ECRRepositoryName} ECS service"
+      VpcId: !FindInMap [env, dev, VPCId]
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # ECSServiceRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     RoleName: !Sub "ECSServiceRole-${ECRRepositoryName}-${AWS::StackName}"
+  #     AssumeRolePolicyDocument:
+  #       Version: "2012-10-17"
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service:
+  #               - ecs.amazonaws.com
+  #           Action:
+  #             - sts:AssumeRole
+  #     ManagedPolicyArns:
+  #       - arn:aws:iam::aws:policy/aws-service-role/AmazonECSServiceRolePolicy
+
+
+
+
+  # ECSServiceLinkedRole2:
+  #   Type: 'AWS::IAM::ServiceLinkedRole'
+  #   Properties:
+  #     AWSServiceName: ecs.amazonaws.com
+  #     Description: !Sub "Service linked role for ${ECRRepositoryName} ECS service"
+  #     # CustomSuffix: TestSuffix
+
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      # Role: arn:aws:iam::aws:policy/aws-service-role/AmazonECSServiceRolePolicy
+      Cluster: !FindInMap [env, dev, ECSCLusterName]
+      CapacityProviderStrategy:
+      - CapacityProvider: FARGATE
+        Base: 0
+        Weight: 1
+      TaskDefinition: !Ref TaskDefinition
+      ServiceName: !Sub "${ECRRepositoryName}-Service"
+      SchedulingStrategy: REPLICA
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ECSServiceSecurityGroup
+          Subnets: !FindInMap [env, dev, SubnetIds]
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 0
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DeploymentController:
+        Type: ECS
+      ServiceConnectConfiguration:
+        Enabled: false
+      Tags: []
+      EnableECSManagedTags: true
 
 Outputs:
      CodeCommitRepositoryCloneUrlHttp:
