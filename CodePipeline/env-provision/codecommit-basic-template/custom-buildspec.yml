@@ -1,0 +1,39 @@
+# If you want to choose to use custom-buildspec.yml, you can specify the process in this file.
+# Please change the the process and the values of the variables to the actual values.
+# ---
+# version: 0.2
+# phases:
+#   pre_build:
+#     commands:
+#       # Fill in ECR information
+#       version: 0.2
+#       phases:
+#         pre_build:
+#           commands:
+#             - ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+#             - REGION=$(aws configure get region)
+#             - REGISTRY_URI=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+#             # Fill in Docker information
+#             - REPO_NAME=$(aws codecommit get-repository --repository-name MyCodeCommitRepo --query "repositoryMetadata.repositoryName" --output text)
+#             - IMAGE_NAME=$REPO_NAME
+#             - IMAGE_NAME=<CHANGE_TO_ACTUAL_IMAGE_NAME> # Docker image name
+#             # Fill in ECS information
+#             - CONTAINER_NAME=<CHANGE_TO_ACTUAL_CONTAINER_NAME> # TaskDefinition: container definition name (Wrapper for imageUri)
+#             # -----------------------
+#             - IMAGE=$REGISTRY_URI/$IMAGE_NAME
+#             - COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
+#             - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URI
+#         build:
+#           commands:
+#             - docker build --tag $IMAGE .
+#             - docker tag $IMAGE $IMAGE:$COMMIT
+#         post_build:
+#           commands:
+#             - docker push $IMAGE
+#             - docker push $IMAGE:$COMMIT
+#             # Create imagedefinitions.json. This is used by ECS to know which docker image to use.
+#             - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $IMAGE:$COMMIT > imagedefinitions.json
+#       artifacts:
+#         files:
+#           # Put imagedefinitions.json in the artifact zip file
+#           - imagedefinitions.json

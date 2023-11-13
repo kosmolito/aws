@@ -1,0 +1,46 @@
+*test*
+
+# Terraform related files and directories
+# Local .terraform directories
+**/.terraform/*
+*.terraform*
+*.tfstate*
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+*.tfplan
+*.tfout
+*.lock.hcl
+*.lock.json
+
+# Ignore Most Commonly used OS files
+# ========================
+# Windows:
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux:
+*~
+
+# macOS:
+*.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node.js
+# =========
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore Security sensitive files
+# ========================
+*.key
+*.pem
+*.csr
+*.crt
+*.cer
+
