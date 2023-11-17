@@ -1,4 +1,4 @@
-# Assignment 3 - CI/CD Workflow Implementation
+# CI/CD Workflow Implementation
 
 ## About
 
