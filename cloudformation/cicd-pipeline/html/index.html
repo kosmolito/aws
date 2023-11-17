@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My Beautiful Page</title>
+    <style>
+      body {
+        background-color: #212121;
+        font-family: Arial, sans-serif;
+        color: #e5e5e5;
+        margin: 0;
+        padding: 0;
+      }
+      header {
+        background-color: #333;
+        color: #fff;
+        padding: 20px;
+        text-align: center;
+      }
+      h1 {
+        margin: 0;
+        font-size: 36px;
+      }
+      main {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      p {
+        font-size: 18px;
+        line-height: 1.5;
+      }
+      a {
+        color: #42a08d;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Content Taken From S3 Bucket. (Karker)</h1>
+    </header>
+    <main>
+      <img src="iac.png" alt="Image description">
+      <p>Welcome to my beautiful page! This is just a simple example of what you can do with HTML and CSS.</p>
+      <p>Feel free to <a href="#">contact me</a> if you have any questions or comments.</p>
+      <script>
+        function resize() {
+          var width = window.innerWidth;
+          var height = window.innerHeight;
+          document.body.style.fontSize = width/50 + "px";
+        }
+        resize();
+        window.onresize = function() {
+          resize();
+        };
+      </script>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,782 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This template creates a CodePipeline for developers to deploy their code to. It will create a CodeCommit repository, a CodeBuild project, and a CodePipeline pipeline.
+
+Parameters:
+
+  CodeCommitRepositoryName:
+    Type: String
+    AllowedPattern: ^[a-zA-Z0-9._\-]+(?<!\.git)$
+    Description: Enter a name for the CodeCommit repository to create
+    ConstraintDescription: must be a valid CodeCommit repository name.
+
+  EcrRepositoryName:
+    Type: String
+    Default: testecrrepo
+    AllowedPattern: ^[a-z0-9/-]{2,256}$
+    Description: Enter a name for the ECR repository to create (must be lowercase) (e.g. mycontainerrepo)
+    ConstraintDescription: >
+      The ECR repository name must start with a letter and can only contain lowercase letters, numbers, hyphens, underscores, and forward slashes.
+
+  ContainerPort:
+    Type: Number
+    Default: 80
+    Description: Enter the port number that the container listens on (e.g. 80)
+
+  HostPort:
+    Type: Number
+    Default: 80
+    Description: Enter the port number that the load balancer listens on (e.g. 80)
+
+Mappings:
+  RegionMap:
+    # Details for eu-west-1
+    eu-west-1:
+      InstanceType: t2.micro
+      AMI: ami-0f3164307ee5d695a
+      SSHKeyName: aws_rsa.pub
+      ApprovalEmail: "user@email.com"
+    # Details for eu-north-1
+    eu-north-1:
+      InstanceType: t3.micro
+      AMI: ami-071df4a41c6f9ee2e
+      SSHKeyName: aws_rsa.pub
+      ApprovalEmail: "user@email.com"
+
+Resources:
+
+  TopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties: 
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - 
+            Sid: AllowPublish
+            Effect: Allow
+            Principal:
+              Service:
+                - 'codestar-notifications.amazonaws.com'
+            Action:
+              - 'SNS:Publish'
+            Resource:
+              - !Ref Topic
+      Topics: 
+        - !Ref Topic
+
+# Create a sns topic
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "${CodeCommitRepositoryName}-CodeCommit"
+      Subscription:
+        - Endpoint: !FindInMap [RegionMap, !Ref "AWS::Region", ApprovalEmail]
+          Protocol: email
+
+# Create a sns topic subscription
+  SNSTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !FindInMap [RegionMap, !Ref "AWS::Region", ApprovalEmail]
+      Protocol: email
+      TopicArn: !Ref Topic
+
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref CodeCommitRepositoryName
+      Triggers:
+        - Name: Trigger
+          CustomData: The Code Repository
+          DestinationArn: !Ref Topic
+          Branches:
+            - main
+          Events: [all]
+      Code:
+        BranchName: main
+        S3:
+          Bucket: !ImportValue ArtifactBucket
+          Key: "codecommit-basic-template.zip"
+      Tags:
+        - Key: Name
+          Value: !Sub "${CodeCommitRepositoryName}-${AWS::StackName}"
+
+  # Create a ECR Repository for the images
+  EcrRepository: 
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true # Delete the repository when the stack is deleted, even if it's not empty, NOT RECOMMENDED FOR PRODUCTION
+      RepositoryName: !Ref EcrRepositoryName
+      ImageScanningConfiguration: 
+        ScanOnPush: false
+
+
+
+############################################## CodeBuild ##############################################
+  BuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CodeBuildServiceRole-${CodeCommitRepositoryName}-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+
+  BuildServicePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: 
+      - EcrRepository
+      # - BuildProject
+      - CodeCommitRepository
+    Properties:
+      PolicyName: !Sub "CodeBuildPolicy-${CodeCommitRepositoryName}-${AWS::StackName}"
+      Roles: 
+        - !Ref BuildServiceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${CodeCommitRepositoryName}" # CodeBuild logs
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/BuildProject-${CodeCommitRepositoryName}:*" # CodeBuild logs
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              # - s3:GetObjectAcl
+              - s3:GetObjectVersion
+              - s3:GetBucketAcl
+              - s3:GetBucketLocation
+              - s3:ListBucket
+            Resource:
+              - !Sub "arn:aws:s3:::codepipeline-${AWS::Region}-*" # CodePipeline artifacts bucket
+              - "arn:aws:s3:::static-website-content-bucket-campus*" # For testing purposes only
+          - Effect: Allow
+            Action:
+              - codecommit:GitPull
+            Resource:
+              - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepositoryName}" # CodeCommit repository
+          - Effect: Allow
+            Action:
+              - codebuild:CreateReportGroup
+              - codebuild:CreateReport
+              - codebuild:UpdateReport
+              - codebuild:BatchPutTestCases
+              - codebuild:BatchPutCodeCoverages
+            Resource:
+              - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/BuildProject-${CodeCommitRepositoryName}-*" # CodeBuild reports
+          - Effect: Allow
+            Action:
+              - ssm:GetParameters
+              - ssm:GetParametersByPath
+            Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*"
+
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "BuildProject-${CodeCommitRepositoryName}"
+      Description: !Sub "BuildProject for ${CodeCommitRepositoryName} - Stack: ${AWS::StackName}"
+      ServiceRole: !Ref BuildServiceRole
+      Artifacts:
+        Type: NO_ARTIFACTS
+      BadgeEnabled: false
+      Cache:
+        Type: NO_CACHE
+      Environment: # use Ubuntu standard v7
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: true
+      TimeoutInMinutes: 15
+      QueuedTimeoutInMinutes: 480
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+        S3Logs:
+          Status: DISABLED
+      Source:
+        GitCloneDepth: 1
+        GitSubmodulesConfig:
+          FetchSubmodules: false
+        Type: CODECOMMIT
+        Location: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${CodeCommitRepositoryName}"
+        BuildSpec: !Sub |
+          version: 0.2
+          env:
+            parameter-store:
+              DOCKER_USER: "docker_user"
+              DOCKER_PASS: "docker_pass"
+          phases:
+            pre_build:
+              commands:
+                - echo "Logging in to Docker hub (Creds from Parameter Store)..."
+                - docker login -u $DOCKER_USER -p $DOCKER_PASS
+                # Fill in AWS information
+                - ACCOUNT_ID=${AWS::AccountId}
+                - REGION=${AWS::Region}
+                - REGISTRY_URI=502377582075.dkr.ecr.$REGION.amazonaws.com
+                # Fill in Docker information
+                - IMAGE_NAME=${EcrRepository}
+                # Fill in ECS information
+                - CONTAINER_NAME=${EcrRepository}Container # TaskDefinition: container definition name (Wrapper for imageUri)
+                # -----------------------
+                - IMAGE=$REGISTRY_URI/$IMAGE_NAME
+                - COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-8)
+                - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY_URI
+            build:
+              commands:
+                - docker build --build-arg AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION --build-arg AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI --tag $IMAGE .
+                # - docker build --tag $IMAGE .
+                - docker tag $IMAGE $IMAGE:$COMMIT
+            post_build:
+              commands:
+                - docker push $IMAGE
+                - docker push $IMAGE:$COMMIT
+                # Create imagedefinitions.json. This is used by ECS to know which docker image to use.
+                - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $IMAGE:$COMMIT > imagedefinitions.json
+          artifacts:
+            files:
+              # Put imagedefinitions.json in the artifact zip file
+              - imagedefinitions.json
+
+  FirstBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "FirstBuildServiceRole-${CodeCommitRepositoryName}-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+
+  FirstBuildServiceInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "FirstBuildServiceInstanceProfile-${CodeCommitRepositoryName}-${AWS::StackName}"
+      Roles:
+        - !Ref FirstBuildServiceRole
+
+
+  FirstBuildInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      SecurityGroupIds:
+        - !ImportValue dev-SshSecurityGroup
+      IamInstanceProfile: !Ref FirstBuildServiceInstanceProfile
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+      InstanceType: !FindInMap [RegionMap, !Ref "AWS::Region", InstanceType]
+      # Terminate the instance when the provisioning is done
+      InstanceInitiatedShutdownBehavior: terminate
+      KeyName: !FindInMap [RegionMap, !Ref "AWS::Region", SSHKeyName]
+      SubnetId: !ImportValue dev-PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-firstbuild-provioner"
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash -x
+
+          BuildProject=${BuildProject}
+          counter=0
+
+          while [ $counter -lt 10 ]; do
+              # Start the build job and get the build id
+              build_id=$(aws codebuild start-build --project-name $BuildProject --query 'build.id' --output text)
+              # Get the build status from the response
+              status=$(aws codebuild batch-get-builds --ids $build_id --query 'builds[0].buildStatus' --output text)
+
+              # Wait for the build to be IN_PROGRESS before allowing a new build
+              while [ "$status" == "IN_PROGRESS" ]; do
+                  # Add a delay before checking the status again
+                  sleep 10
+
+                  status=$(aws codebuild batch-get-builds --ids $build_id --query 'builds[0].buildStatus' --output text)
+                  if [ "$status" == "IN_PROGRESS" ]; then
+                      echo "Build is in progress. Waiting..."
+                  fi
+              done
+
+              # Increment the counter
+              ((counter++))
+
+              # Check the status of the build (you might need to adjust this based on the actual output)
+              status=$(aws codebuild batch-get-builds --ids $build_id --query 'builds[0].buildStatus' --output text)
+
+              # Check if the status is 0 (Succeeded)
+              if [ "$status" == "SUCCEEDED" ]; then
+                  echo "Build succeeded!"
+                  break
+              elif [ "$status" == "FAILED" ]; then
+                  echo "Build failed. Retrying..."
+              fi
+
+              # Add a delay before the next iteration (you can adjust the sleep time as needed)
+              sleep 10
+          done
+
+          echo "Build $status after $counter attempts"
+
+          if [ "$status" == "SUCCEEDED" ]; then
+              shutdown -h now
+          fi
+
+
+  AppServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Description: Service Discovery for the application
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 60
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: !Sub "${EcrRepositoryName}-AppService"
+      NamespaceId: !Ref AppNameSpace
+
+  AppNameSpace:
+    Type: 'AWS::ServiceDiscovery::PrivateDnsNamespace'
+    Properties:
+      Description: Namespace for the application
+      Vpc: !ImportValue dev-VpcId
+      Name: !Sub "${EcrRepositoryName}-AppNamespace"
+      Properties:
+        DnsProperties:
+          SOA:
+            TTL: 100
+
+
+############################################## ECS Task Definition ##############################################
+  TaskDefinitionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "TaskDefinitionRole-${EcrRepositoryName}-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess # CloudWatch Logs
+
+  # ECS Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${EcrRepositoryName}TaskDefinition"
+      Cpu: 256
+      Memory: 512
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt TaskDefinitionRole.Arn
+      # TaskRoleArn: !Ref TaskDefinitionRole
+      ContainerDefinitions:
+        - Name: !Sub "${EcrRepositoryName}Container"
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepositoryName}"
+          PortMappings:
+            - Name: !Sub "${EcrRepositoryName}-${ContainerPort}-tcp"
+              ContainerPort: !Ref ContainerPort
+              HostPort: !Ref HostPort
+              Protocol: tcp
+              AppProtocol: http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-group: !Sub "${EcrRepositoryName}TaskDefinition"
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+
+############################################## ECS Service ##############################################
+  EcsServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${EcrRepositoryName} ECS service"
+      VpcId: !ImportValue dev-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref HostPort
+          ToPort: !Ref HostPort
+          SourceSecurityGroupId: !Ref LoadBalancerSG
+
+  EcsService:
+    DependsOn:
+      - FirstBuildInstance
+      - Listener
+      - AppLoadBalancer
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue dev-EcsCluster
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      TaskDefinition: !Ref TaskDefinition
+      SchedulingStrategy: REPLICA
+      DesiredCount: 1
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 0
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref EcsServiceSecurityGroup
+          Subnets:
+            - !ImportValue dev-PublicSubnetA
+            - !ImportValue dev-PublicSubnetB
+            - !ImportValue dev-PublicSubnetC
+      LoadBalancers:
+        - ContainerName: !Sub "${EcrRepositoryName}Container"
+          ContainerPort: 80
+          TargetGroupArn:
+            Ref: AppTargetGroup
+
+      ServiceName: !Sub "${EcrRepositoryName}-Service"
+      DeploymentController:
+        Type: ECS
+      ServiceConnectConfiguration:
+        Enabled: false
+        Namespace: !Ref AppServiceDiscovery
+      Tags: []
+      EnableECSManagedTags: true
+
+  LoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the load balancer to allow inbound traffic
+      VpcId: !ImportValue dev-VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+############################################## Load Balancer ##############################################
+  AppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Name: !Sub "${EcrRepositoryName}"
+      SecurityGroups:
+        - !Ref LoadBalancerSG
+      Subnets:
+        - !ImportValue dev-PublicSubnetA
+        - !ImportValue dev-PublicSubnetB
+        - !ImportValue dev-PublicSubnetC
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /
+      Name: !Sub "${EcrRepositoryName}-TargetGroup"
+      Port: !Ref HostPort
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckProtocol: HTTP
+      VpcId: !ImportValue dev-VpcId
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: AppTargetGroup
+      LoadBalancerArn:
+        Ref: AppLoadBalancer
+      Port: !Ref HostPort
+      Protocol: HTTP
+
+############################################## AutoScaling ##############################################
+  AutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 4
+      MinCapacity: 2
+      ResourceId: !Join
+        - /
+        - - service
+          - !ImportValue dev-EcsCluster
+          - !GetAtt EcsService.Name
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  AutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub "${EcrRepositoryName}-ScalingPolicy"
+      PolicyType: TargetTrackingScaling
+      # ResourceId: service/dev-ecs-cluster/TestService
+      ScalingTargetId:
+        Ref: AutoScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: '70'
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+
+############################################## CodePipeline ##############################################
+  pipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "pipelineServiceRole-${AWS::Region}-${CodeCommitRepositoryName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCodePipeline_FullAccess
+
+  pipelineServicePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: 
+      - EcrRepository
+      - BuildProject
+      - CodeCommitRepository
+    Properties:
+      PolicyName: !Sub "pipelineServicePolicy-${AWS::Region}-${CodeCommitRepositoryName}"
+      Roles: 
+        - !Ref pipelineServiceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action:
+          - codecommit:CancelUploadArchive
+          - codecommit:GetBranch
+          - codecommit:GetCommit
+          - codecommit:GetRepository
+          - codecommit:GetUploadArchiveStatus
+          - codecommit:UploadArchive
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - iam:PassRole
+          Resource: "*"
+          Effect: Allow
+          Condition:
+            StringEqualsIfExists:
+              iam:PassedToService:
+              - cloudformation.amazonaws.com
+              - elasticbeanstalk.amazonaws.com
+              - ec2.amazonaws.com
+              - ecs-tasks.amazonaws.com
+        - Action:
+          - codedeploy:CreateDeployment
+          - codedeploy:GetApplication
+          - codedeploy:GetApplicationRevision
+          - codedeploy:GetDeployment
+          - codedeploy:GetDeploymentConfig
+          - codedeploy:RegisterApplicationRevision
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - codestar-connections:UseConnection
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - elasticbeanstalk:*
+          - ec2:*
+          - elasticloadbalancing:*
+          - autoscaling:*
+          - cloudwatch:*
+          - s3:*
+          - sns:*
+          - cloudformation:*
+          - rds:*
+          - sqs:*
+          - ecs:*
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - lambda:InvokeFunction
+          - lambda:ListFunctions
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - opsworks:CreateDeployment
+          - opsworks:DescribeApps
+          - opsworks:DescribeCommands
+          - opsworks:DescribeDeployments
+          - opsworks:DescribeInstances
+          - opsworks:DescribeStacks
+          - opsworks:UpdateApp
+          - opsworks:UpdateStack
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - cloudformation:CreateStack
+          - cloudformation:DeleteStack
+          - cloudformation:DescribeStacks
+          - cloudformation:UpdateStack
+          - cloudformation:CreateChangeSet
+          - cloudformation:DeleteChangeSet
+          - cloudformation:DescribeChangeSet
+          - cloudformation:ExecuteChangeSet
+          - cloudformation:SetStackPolicy
+          - cloudformation:ValidateTemplate
+          Resource: "*"
+          Effect: Allow
+        - Action:
+          - codebuild:BatchGetBuilds
+          - codebuild:StartBuild
+          - codebuild:BatchGetBuildBatches
+          - codebuild:StartBuildBatch
+          Resource: "*"
+          Effect: Allow
+        - Effect: Allow
+          Action:
+          - devicefarm:ListProjects
+          - devicefarm:ListDevicePools
+          - devicefarm:GetRun
+          - devicefarm:GetUpload
+          - devicefarm:CreateUpload
+          - devicefarm:ScheduleRun
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - servicecatalog:ListProvisioningArtifacts
+          - servicecatalog:CreateProvisioningArtifact
+          - servicecatalog:DescribeProvisioningArtifact
+          - servicecatalog:DeleteProvisioningArtifact
+          - servicecatalog:UpdateProduct
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - cloudformation:ValidateTemplate
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - ecr:DescribeImages
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - states:DescribeExecution
+          - states:DescribeStateMachine
+          - states:StartExecution
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - appconfig:StartDeployment
+          - appconfig:StopDeployment
+          - appconfig:GetDeployment
+          Resource: "*"
+
+  pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "Pipeline-${CodeCommitRepositoryName}"
+      RoleArn: !GetAtt pipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: "codepipeline-eu-west-1-969941146089"
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                RepositoryName: !Ref CodeCommitRepositoryName
+                BranchName: main
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref BuildProject
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: ECS
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ClusterName: !ImportValue dev-EcsCluster
+                ServiceName: !Ref EcsService
+                FileName: imagedefinitions.json
+        - Name: Notify
+          Actions:
+            - Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: 1
+                Provider: Manual
+              Configuration:
+                CustomData: !Sub  >
+                  "Approve the changes to deploy the new image to ECS.
+                  Link to the webapp: http://${AppLoadBalancer.DNSName}/"
+                ExternalEntityLink: !Sub "https://console.aws.amazon.com/ecs/home?region=${AWS::Region}#/clusters/${EcsService}/services/${EcsService}/tasks"
+                NotificationArn: !Ref Topic
+              RunOrder: 1
+
+Outputs:
+  CodeCommitRepositoryCloneUrlHttp:
+    Description: "CodeCommit repository clone URL over HTTPS"
+    Value: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${CodeCommitRepositoryName}"
+
+  AppLoadBalancerDNSName:
+    Description: "DNS name of the load balancer"
+    Value: !GetAtt AppLoadBalancer.DNSName
+
+  buildProjectName:
+    Description: "CodeBuild project name"
+    Value: !Ref BuildProject
